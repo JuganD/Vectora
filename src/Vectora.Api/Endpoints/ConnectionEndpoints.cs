@@ -1,0 +1,134 @@
+using Vectora.Api.Helpers;
+using Vectora.Api.Models;
+using Vectora.Api.Repositories;
+
+namespace Vectora.Api.Endpoints;
+
+public static class ConnectionEndpoints
+{
+    public static void MapConnectionEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/api/connections").WithTags("Connections");
+
+        group.MapGet("/", GetAll)
+            .WithName("GetAllConnections");
+
+        group.MapGet("/{id:int}", GetById)
+            .WithName("GetConnectionById");
+
+        group.MapPost("/", Create)
+            .WithName("CreateConnection");
+
+        group.MapPut("/{id:int}", Update)
+            .WithName("UpdateConnection");
+
+        group.MapDelete("/{id:int}", Delete)
+            .WithName("DeleteConnection");
+    }
+
+    private static async Task<IResult> GetAll(IConnectionRepository connectionRepository)
+    {
+        var connections = await connectionRepository.GetAllAsync();
+        var dtos = connections.Select(c => new ConnectionDto
+        {
+            Id = c.Id,
+            Name = c.Name,
+            ConnectionString = c.ConnectionString,
+            IsEmulator = c.IsEmulator,
+            EmulatorConfigId = c.EmulatorConfigId
+        }).ToList();
+        return Results.Ok(dtos);
+    }
+
+    private static async Task<IResult> GetById(int id, IConnectionRepository connectionRepository)
+    {
+        var connection = await connectionRepository.GetByIdAsync(id);
+        if (connection == null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(new ConnectionDto
+        {
+            Id = connection.Id,
+            Name = connection.Name,
+            ConnectionString = connection.ConnectionString,
+            IsEmulator = connection.IsEmulator,
+            EmulatorConfigId = connection.EmulatorConfigId
+        });
+    }
+
+    private static async Task<IResult> Create(CreateConnectionDto dto, IConnectionRepository connectionRepository)
+    {
+        // Validate input
+        var (nameValid, nameError) = ValidationHelper.ValidateConnectionName(dto.Name);
+        if (!nameValid)
+        {
+            return Results.BadRequest(new { error = nameError });
+        }
+
+        var (connValid, connError) = ValidationHelper.ValidateConnectionString(dto.ConnectionString);
+        if (!connValid)
+        {
+            return Results.BadRequest(new { error = connError });
+        }
+
+        var connection = await connectionRepository.CreateAsync(dto.Name, dto.ConnectionString, dto.IsEmulator, dto.EmulatorConfigId);
+        var result = new ConnectionDto
+        {
+            Id = connection.Id,
+            Name = connection.Name,
+            ConnectionString = connection.ConnectionString,
+            IsEmulator = connection.IsEmulator,
+            EmulatorConfigId = connection.EmulatorConfigId
+        };
+
+        return Results.Created($"/api/connections/{connection.Id}", result);
+    }
+
+    private static async Task<IResult> Update(int id, UpdateConnectionDto dto, IConnectionRepository connectionRepository)
+    {
+        // Validate input
+        var (nameValid, nameError) = ValidationHelper.ValidateConnectionName(dto.Name);
+        if (!nameValid)
+        {
+            return Results.BadRequest(new { error = nameError });
+        }
+
+        if (!string.IsNullOrEmpty(dto.ConnectionString))
+        {
+            var (connValid, connError) = ValidationHelper.ValidateConnectionString(dto.ConnectionString);
+            if (!connValid)
+            {
+                return Results.BadRequest(new { error = connError });
+            }
+        }
+
+        var connection = await connectionRepository.UpdateAsync(id, dto.Name, dto.ConnectionString, dto.IsEmulator, dto.EmulatorConfigId);
+        if (connection == null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(new ConnectionDto
+        {
+            Id = connection.Id,
+            Name = connection.Name,
+            ConnectionString = connection.ConnectionString,
+            IsEmulator = connection.IsEmulator,
+            EmulatorConfigId = connection.EmulatorConfigId
+        });
+    }
+
+    private static async Task<IResult> Delete(int id, IConnectionRepository connectionRepository)
+    {
+        var deleted = await connectionRepository.DeleteAsync(id);
+        if (!deleted)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.NoContent();
+    }
+}
+

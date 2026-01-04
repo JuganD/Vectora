@@ -1,0 +1,164 @@
+import type {
+  Connection, QueueInfo, TopicInfo, SubscriptionInfo, ServiceBusMessage, SendMessageRequest,
+  CreateConnectionRequest, CreateQueueRequest, CreateTopicRequest, CreateSubscriptionRequest,
+  EmulatorConfig, QueueProperties, TopicProperties, SubscriptionProperties,
+  UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest
+} from '../types';
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+function getToken(): string | null {
+  return localStorage.getItem('vectora_token');
+}
+
+async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const headers: HeadersInit = {
+    // Only set Content-Type if there's a body
+    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+
+  if (response.status === 401) {
+    localStorage.removeItem('vectora_token');
+    window.location.reload();
+    throw new Error('Unauthorized');
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `HTTP ${response.status}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  // Handle empty response body
+  const text = await response.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text);
+}
+
+// Auth
+export async function getAuthStatus(): Promise<{ authRequired: boolean }> {
+  const response = await fetch(`${API_BASE}/auth/status`);
+  return response.json();
+}
+
+export async function login(password: string): Promise<{ success: boolean; token?: string; error?: string }> {
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  return response.json();
+}
+
+export async function validateToken(token: string): Promise<boolean> {
+  const response = await fetch(`${API_BASE}/auth/validate`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  return response.ok;
+}
+
+// Connections
+export const getConnections = () => fetchApi<Connection[]>('/connections');
+export const getConnection = (id: number) => fetchApi<Connection>(`/connections/${id}`);
+export const createConnection = (data: CreateConnectionRequest) => 
+  fetchApi<Connection>('/connections', { method: 'POST', body: JSON.stringify(data) });
+export const updateConnection = (id: number, data: Partial<CreateConnectionRequest>) =>
+  fetchApi<Connection>(`/connections/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteConnection = (id: number) => 
+  fetchApi<void>(`/connections/${id}`, { method: 'DELETE' });
+
+// Emulator configs
+export const getEmulatorConfigs = () => fetchApi<EmulatorConfig[]>('/emulator-configs');
+export const uploadEmulatorConfig = (fileName: string, content: string) =>
+  fetchApi<EmulatorConfig>('/emulator-configs', { method: 'POST', body: JSON.stringify({ fileName, content }) });
+export const deleteEmulatorConfig = (id: number) =>
+  fetchApi<void>(`/emulator-configs/${id}`, { method: 'DELETE' });
+
+// Service Bus entities
+export const getEntities = (connectionId: number) => 
+  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(`/connections/${connectionId}/servicebus/entities`);
+
+// Queue operations
+export const getQueueRuntimeInfo = (connectionId: number, queueName: string) =>
+  fetchApi<QueueInfo>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/runtime`);
+export const getQueueProperties = (connectionId: number, queueName: string) =>
+  fetchApi<QueueProperties>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/properties`);
+export const createQueue = (connectionId: number, data: CreateQueueRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/queues`, { method: 'POST', body: JSON.stringify(data) });
+export const deleteQueue = (connectionId: number, queueName: string) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}`, { method: 'DELETE' });
+export const updateQueue = (connectionId: number, queueName: string, data: UpdateQueueRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}`, { method: 'PUT', body: JSON.stringify(data) });
+
+// Topic operations
+export const getTopicProperties = (connectionId: number, topicName: string) =>
+  fetchApi<TopicProperties>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/properties`);
+export const createTopic = (connectionId: number, data: CreateTopicRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics`, { method: 'POST', body: JSON.stringify(data) });
+export const deleteTopic = (connectionId: number, topicName: string) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}`, { method: 'DELETE' });
+export const updateTopic = (connectionId: number, topicName: string, data: UpdateTopicRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}`, { method: 'PUT', body: JSON.stringify(data) });
+
+// Subscription operations
+export const getSubscriptionRuntimeInfo = (connectionId: number, topicName: string, subscriptionName: string) =>
+  fetchApi<SubscriptionInfo>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/runtime`);
+export const getSubscriptionProperties = (connectionId: number, topicName: string, subscriptionName: string) =>
+  fetchApi<SubscriptionProperties>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/properties`);
+export const createSubscription = (connectionId: number, topicName: string, data: CreateSubscriptionRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions`, { method: 'POST', body: JSON.stringify(data) });
+export const deleteSubscription = (connectionId: number, topicName: string, subscriptionName: string) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}`, { method: 'DELETE' });
+export const updateSubscription = (connectionId: number, topicName: string, subscriptionName: string, data: UpdateSubscriptionRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}`, { method: 'PUT', body: JSON.stringify(data) });
+
+// Messages
+export const peekQueueMessages = (connectionId: number, queueName: string, maxMessages = 50, deadLetter = false, fromSequenceNumber?: number) =>
+  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages?maxMessages=${maxMessages}&deadLetter=${deadLetter}${fromSequenceNumber ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+export const peekSubscriptionMessages = (connectionId: number, topicName: string, subscriptionName: string, maxMessages = 50, deadLetter = false, fromSequenceNumber?: number) =>
+  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages?maxMessages=${maxMessages}&deadLetter=${deadLetter}${fromSequenceNumber ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+
+export const receiveQueueMessages = (connectionId: number, queueName: string, maxMessages = 10, deadLetter = false) =>
+  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
+export const receiveSubscriptionMessages = (connectionId: number, topicName: string, subscriptionName: string, maxMessages = 10, deadLetter = false) =>
+  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
+
+export const sendToQueue = (connectionId: number, queueName: string, message: SendMessageRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages`, { method: 'POST', body: JSON.stringify(message) });
+export const sendToTopic = (connectionId: number, topicName: string, message: SendMessageRequest) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/messages`, { method: 'POST', body: JSON.stringify(message) });
+
+export const returnQueueDeadLetter = (connectionId: number, queueName: string, sequenceNumber: number, message?: SendMessageRequest, deleteOriginal = true) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/deadletter/${sequenceNumber}/return?deleteOriginal=${deleteOriginal}`, { method: 'POST', body: JSON.stringify(message ?? null) });
+export const returnSubscriptionDeadLetter = (connectionId: number, topicName: string, subscriptionName: string, sequenceNumber: number, message?: SendMessageRequest, deleteOriginal = true) =>
+  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/deadletter/${sequenceNumber}/return?deleteOriginal=${deleteOriginal}`, { method: 'POST', body: JSON.stringify(message ?? null) });
+
+export const returnQueueDeadLetterBatch = (connectionId: number, queueName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/deadletter/return/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+export const returnSubscriptionDeadLetterBatch = (connectionId: number, topicName: string, subscriptionName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/deadletter/return/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+
+export const receiveQueueDeadLetterBatch = (connectionId: number, queueName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/deadletter/receive/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+export const receiveSubscriptionDeadLetterBatch = (connectionId: number, topicName: string, subscriptionName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/deadletter/receive/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+
+// Settings
+export interface Settings {
+  batchOperationTimeoutSeconds: number;
+}
+
+export const getSettings = () => fetchApi<Settings>('/settings');
+export const updateSettings = (settings: Partial<Settings>) =>
+  fetchApi<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settings) });
