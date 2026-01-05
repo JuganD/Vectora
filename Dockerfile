@@ -21,8 +21,9 @@ WORKDIR /app
 # Install curl for health checks
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-# Create directories for data and emulator configs
-RUN mkdir -p /data /emulator-configs
+# Create directories for data and emulator configs with proper permissions
+RUN mkdir -p /data /emulator-configs && \
+    chown -R app:app /data /emulator-configs
 
 # Copy backend
 COPY --from=backend-build /app/out ./
@@ -38,6 +39,9 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 
 # Expose port
 EXPOSE 8080
+
+# Switch to non-root user
+USER app
 
 # Run the application
 ENTRYPOINT ["dotnet", "Vectora.Api.dll"]
