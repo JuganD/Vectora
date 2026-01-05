@@ -58,6 +58,16 @@ A modern, self-hosted Azure Service Bus explorer — a lightweight alternative t
 The application remembers your connections, so you don't have to specify them everytime, as long as you have a persistant volume (for SQLite).  
 When you open up the application for the first time, if you have specified a password, you'll be greeted with the login screen, otherwise, sent directly to the explorer UI.  
 
+In the explorer UI, you can:
+- switch seemlessly between connections
+- search entities
+- select entities on the left panel and see their messages
+- switch to DLQ and see DLQ messages
+- consume messages in queue/subscription or DLQ
+- return DLQ messages to the queue/subscription
+- edit and delete queues/topics/subscriptions, by sliding the entity to the left side, revealing a menu for that entity
+- adjust the timeout of long operations
+
 ### First time setup
 You need to set up at least one Service Bus connection, in order for the explorer interface to show up.  
 1. Navigate the dropdown at the top menu
