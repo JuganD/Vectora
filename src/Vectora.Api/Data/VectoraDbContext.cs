@@ -12,6 +12,7 @@ public class VectoraDbContext : DbContext
     public DbSet<ServiceBusConnection> Connections { get; set; }
     public DbSet<EmulatorConfigFile> EmulatorConfigs { get; set; }
     public DbSet<Setting> Settings { get; set; }
+    public DbSet<MessageTemplate> MessageTemplates { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +38,14 @@ public class VectoraDbContext : DbContext
             entity.Property(e => e.Key).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Value).IsRequired();
             entity.HasIndex(e => e.Key).IsUnique();
+        });
+
+        modelBuilder.Entity<MessageTemplate>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.Body).IsRequired();
+            entity.HasIndex(e => e.Name).IsUnique();
         });
     }
 }

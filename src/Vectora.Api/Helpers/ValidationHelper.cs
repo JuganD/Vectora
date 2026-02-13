@@ -137,11 +137,11 @@ public static partial class ValidationHelper
     /// <summary>
     /// Validates max messages parameter.
     /// </summary>
-    public static (bool IsValid, string? Error) ValidateMaxMessages(int maxMessages)
+    public static (bool IsValid, string? Error) ValidateMaxMessages(int maxMessages, int maxLimit = 1000)
     {
-        if (maxMessages < 1 || maxMessages > 1000)
+        if (maxMessages < 1 || maxMessages > maxLimit)
         {
-            return (false, "Max messages must be between 1 and 1000");
+            return (false, $"Max messages must be between 1 and {maxLimit}");
         }
 
         return (true, null);

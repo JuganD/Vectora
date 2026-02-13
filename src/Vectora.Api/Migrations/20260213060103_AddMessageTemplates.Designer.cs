@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Vectora.Api.Data;
 
@@ -10,9 +11,11 @@ using Vectora.Api.Data;
 namespace Vectora.Api.Migrations
 {
     [DbContext(typeof(VectoraDbContext))]
-    partial class VectoraDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260213060103_AddMessageTemplates")]
+    partial class AddMessageTemplates
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.0");

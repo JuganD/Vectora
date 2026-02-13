@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Send, Plus, Trash2, Wand2, GripVertical } from 'lucide-react';
+import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen } from 'lucide-react';
 import Editor from '@monaco-editor/react';
-import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage } from '../types';
-import { sendToQueue, sendToTopic } from '../api/client';
+import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage, MessageTemplate } from '../types';
+import { sendToQueue, sendToTopic, getMessageTemplates, saveMessageTemplate, deleteMessageTemplate } from '../api/client';
 
 // Hook to detect mobile viewport
 function useIsMobile() {
@@ -26,6 +26,8 @@ interface SavedMessage {
   correlationId: string;
   sessionId: string;
   properties: { key: string; value: string }[];
+  sendMultiple?: boolean;
+  sendCount?: string;
 }
 
 interface SendMessageDialogProps {
@@ -48,6 +50,8 @@ function loadSavedMessage(): SavedMessage {
     correlationId: '',
     sessionId: '',
     properties: [],
+    sendMultiple: false,
+    sendCount: '5',
   };
 }
 
@@ -74,8 +78,15 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   const [correlationId, setCorrelationId] = useState(initial.correlationId);
   const [sessionId, setSessionId] = useState(initial.sessionId);
   const [properties, setProperties] = useState<{ key: string; value: string }[]>(initial.properties);
+  const [sendMultiple, setSendMultiple] = useState(initial.sendMultiple ?? false);
+  const [sendCount, setSendCount] = useState(initial.sendCount ?? '5');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const templateMenuRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
   // Panel resizing state
@@ -93,9 +104,87 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
 
   // Save message state to localStorage on changes
   useEffect(() => {
-    const msg: SavedMessage = { body, contentType, subject, messageId, correlationId, sessionId, properties };
+    const msg: SavedMessage = { body, contentType, subject, messageId, correlationId, sessionId, properties, sendMultiple, sendCount };
     localStorage.setItem(LAST_MESSAGE_KEY, JSON.stringify(msg));
-  }, [body, contentType, subject, messageId, correlationId, sessionId, properties]);
+  }, [body, contentType, subject, messageId, correlationId, sessionId, properties, sendMultiple, sendCount]);
+
+  // Load templates on mount
+  useEffect(() => {
+    getMessageTemplates().then(setTemplates).catch(() => {});
+  }, []);
+
+  // Close template menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (templateMenuRef.current && !templateMenuRef.current.contains(e.target as Node)) {
+        setShowTemplateMenu(false);
+      }
+    };
+    if (showTemplateMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showTemplateMenu]);
+
+  const handleSaveTemplate = async () => {
+    if (!templateName.trim()) return;
+    try {
+      const appProps = properties.filter(p => p.key).length > 0
+        ? JSON.stringify(Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, p.value])))
+        : undefined;
+      await saveMessageTemplate({
+        name: templateName.trim(),
+        body,
+        contentType: contentType || undefined,
+        subject: subject || undefined,
+        messageId: messageId || undefined,
+        correlationId: correlationId || undefined,
+        sessionId: sessionId || undefined,
+        applicationProperties: appProps,
+        sendMultiple,
+        sendCount: parseInt(sendCount) || 5,
+      });
+      const updated = await getMessageTemplates();
+      setTemplates(updated);
+      setShowSaveDialog(false);
+      setTemplateName('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save template');
+    }
+  };
+
+  const handleLoadTemplate = (t: MessageTemplate) => {
+    setBody(t.body);
+    setContentType(t.contentType || 'application/json');
+    setSubject(t.subject || '');
+    setMessageId(t.messageId || '');
+    setCorrelationId(t.correlationId || '');
+    setSessionId(t.sessionId || '');
+    setSendMultiple(t.sendMultiple);
+    setSendCount(String(t.sendCount || 5));
+    if (t.applicationProperties) {
+      try {
+        const parsed = JSON.parse(t.applicationProperties);
+        setProperties(Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) })));
+      } catch {
+        setProperties([]);
+      }
+    } else {
+      setProperties([]);
+    }
+    setShowTemplateMenu(false);
+  };
+
+  const handleDeleteTemplate = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteMessageTemplate(id);
+      const updated = await getMessageTemplates();
+      setTemplates(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete template');
+    }
+  };
 
   // Handle panel resizing
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -168,6 +257,11 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       setError('Message body is required');
       return;
     }
+    const count = sendMultiple ? (parseInt(sendCount) || 1) : 1;
+    if (count < 1) {
+      setError('Count must be at least 1');
+      return;
+    }
     setError('');
     setLoading(true);
 
@@ -184,10 +278,12 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     };
 
     try {
-      if (entity.type === 'queue') {
-        await sendToQueue(connection.id, entity.name, message);
-      } else if (entity.type === 'topic') {
-        await sendToTopic(connection.id, entity.name, message);
+      const sendFn = entity.type === 'queue'
+        ? () => sendToQueue(connection.id, entity.name, message)
+        : () => sendToTopic(connection.id, entity.name, message);
+
+      for (let i = 0; i < count; i++) {
+        await sendFn();
       }
       onClose();
     } catch (err) {
@@ -337,6 +433,31 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
                 />
               </div>
 
+              {/* Send Multiple */}
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-dark-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={sendMultiple}
+                    onChange={e => setSendMultiple(e.target.checked)}
+                    className="rounded border-dark-500"
+                  />
+                  Send multiple times
+                </label>
+                {sendMultiple && (
+                  <div className="mt-2">
+                    <input
+                      type="number"
+                      min="1"
+                      value={sendCount}
+                      onChange={e => setSendCount(e.target.value)}
+                      placeholder="Count"
+                      className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                  </div>
+                )}
+              </div>
+
               {/* Application Properties */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -374,18 +495,96 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
           </div>
         </div>
 
+        {/* Save Template Dialog */}
+        {showSaveDialog && (
+          <div className="px-3 md:px-5 py-2 border-t border-dark-600 bg-dark-750 flex items-center gap-2">
+            <input
+              type="text"
+              value={templateName}
+              onChange={e => setTemplateName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSaveTemplate()}
+              placeholder="Template name..."
+              className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              autoFocus
+            />
+            <button
+              onClick={handleSaveTemplate}
+              disabled={!templateName.trim()}
+              className="px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white rounded-lg text-sm disabled:opacity-50 transition-colors"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
+              className="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-white rounded-lg text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         {/* Footer - compact on mobile, especially landscape */}
-        <div className="px-3 md:px-5 py-2 md:py-4 border-t border-dark-600 flex justify-end gap-2 md:gap-3 shrink-0 bg-dark-800">
-          <button onClick={onClose} className="px-3 md:px-4 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg transition-colors text-sm">
-            Cancel
-          </button>
-          <button
-            onClick={handleSend}
-            disabled={loading || !body.trim()}
-            className="px-3 md:px-5 py-1.5 md:py-2 bg-primary-500 hover:bg-primary-400 text-white rounded-lg flex items-center gap-1.5 md:gap-2 disabled:opacity-50 transition-colors text-sm"
-          >
-            <Send className="w-4 h-4" /> {loading ? 'Sending...' : 'Send'}
-          </button>
+        <div className="px-3 md:px-5 py-2 md:py-4 border-t border-dark-600 flex items-center shrink-0 bg-dark-800">
+          {/* Template buttons - left side */}
+          <div className="flex items-center gap-2 relative" ref={templateMenuRef}>
+            <button
+              onClick={() => setShowSaveDialog(!showSaveDialog)}
+              className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
+              title="Save as template"
+            >
+              <Save className="w-4 h-4" /> Save
+            </button>
+            <button
+              onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+              className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
+              title="Load template"
+            >
+              <FolderOpen className="w-4 h-4" /> Load
+            </button>
+
+            {/* Template dropdown menu */}
+            {showTemplateMenu && (
+              <div className="absolute bottom-full left-0 mb-1 w-72 bg-dark-700 border border-dark-500 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+                {templates.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-dark-400 italic">No saved templates</div>
+                ) : (
+                  templates.map(t => (
+                    <div
+                      key={t.id}
+                      onClick={() => handleLoadTemplate(t)}
+                      className="flex items-center justify-between px-3 py-2 hover:bg-dark-600 cursor-pointer group"
+                    >
+                      <span className="text-sm text-white truncate">{t.name}</span>
+                      <button
+                        onClick={(e) => handleDeleteTemplate(t.id, e)}
+                        className="text-dark-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2"
+                        title="Delete template"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Action buttons - right side */}
+          <div className="flex items-center gap-2 md:gap-3">
+            <button onClick={onClose} className="px-3 md:px-4 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg transition-colors text-sm">
+              Cancel
+            </button>
+            <button
+              onClick={handleSend}
+              disabled={loading || !body.trim()}
+              className="px-3 md:px-5 py-1.5 md:py-2 bg-primary-500 hover:bg-primary-400 text-white rounded-lg flex items-center gap-1.5 md:gap-2 disabled:opacity-50 transition-colors text-sm"
+            >
+              <Send className="w-4 h-4" /> {loading ? 'Sending...' : sendMultiple && parseInt(sendCount) > 1 ? `Send (${sendCount}×)` : 'Send'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

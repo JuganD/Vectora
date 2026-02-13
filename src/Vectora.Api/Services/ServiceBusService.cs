@@ -174,15 +174,30 @@ public class ServiceBusService : IServiceBusService
 
         await using (receiver)
         {
-            var messages = await receiver.ReceiveMessagesAsync(maxMessages, TimeSpan.FromSeconds(5));
-            var result = messages.Select(MapToDto).ToList();
+            var allMessages = new List<ServiceBusMessageDto>();
+            var remaining = maxMessages;
+            var timeoutSeconds = await _settingsService.GetBatchOperationTimeoutSecondsAsync();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
 
-            foreach (var msg in messages)
+            while (remaining > 0 && DateTime.UtcNow < deadline)
             {
-                await receiver.CompleteMessageAsync(msg);
+                var batchSize = Math.Min(remaining, 256);
+                var messages = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(5));
+
+                if (messages.Count == 0)
+                    break;
+
+                allMessages.AddRange(messages.Select(MapToDto));
+
+                foreach (var msg in messages)
+                {
+                    await receiver.CompleteMessageAsync(msg);
+                }
+
+                remaining -= messages.Count;
             }
 
-            return result;
+            return allMessages;
         }
     }
 

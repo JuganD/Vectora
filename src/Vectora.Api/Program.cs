@@ -8,11 +8,11 @@ using Vectora.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-const string DataPath = "/data";
+var dataPath = Environment.GetEnvironmentVariable("DataPath") ?? "./data";
 
 // Configure SQLite database
-Directory.CreateDirectory(DataPath);
-var dbPath = Path.Combine(DataPath, "vectora.db");
+Directory.CreateDirectory(dataPath);
+var dbPath = Path.Combine(dataPath, "vectora.db");
 builder.Services.AddDbContext<VectoraDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
 
@@ -29,6 +29,7 @@ builder.Services.AddScoped<IEmulatorConfigFileService, EmulatorConfigFileService
 builder.Services.AddScoped<IEmulatorConfigService, EmulatorConfigService>();
 builder.Services.AddScoped<IServiceBusService, ServiceBusService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
 
 // Configure request body size limit (10MB max)
 builder.WebHost.ConfigureKestrel(options =>
@@ -70,6 +71,7 @@ app.MapEmulatorConfigEndpoints();
 app.MapServiceBusEndpoints();
 app.MapServiceBusMessageEndpoints();
 app.MapSettingsEndpoints();
+app.MapMessageTemplateEndpoints();
 
 // Fallback to index.html for SPA routing
 app.MapFallbackToFile("index.html");

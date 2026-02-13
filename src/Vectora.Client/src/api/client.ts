@@ -2,7 +2,8 @@ import type {
   Connection, QueueInfo, TopicInfo, SubscriptionInfo, ServiceBusMessage, SendMessageRequest,
   CreateConnectionRequest, CreateQueueRequest, CreateTopicRequest, CreateSubscriptionRequest,
   EmulatorConfig, QueueProperties, TopicProperties, SubscriptionProperties,
-  UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest
+  UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest,
+  MessageTemplate, SaveMessageTemplateRequest
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -162,3 +163,11 @@ export interface Settings {
 export const getSettings = () => fetchApi<Settings>('/settings');
 export const updateSettings = (settings: Partial<Settings>) =>
   fetchApi<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settings) });
+
+// Message templates
+export const getMessageTemplates = () => fetchApi<MessageTemplate[]>('/message-templates');
+export const getMessageTemplate = (id: number) => fetchApi<MessageTemplate>(`/message-templates/${id}`);
+export const saveMessageTemplate = (data: SaveMessageTemplateRequest) =>
+  fetchApi<MessageTemplate>('/message-templates', { method: 'POST', body: JSON.stringify(data) });
+export const deleteMessageTemplate = (id: number) =>
+  fetchApi<void>(`/message-templates/${id}`, { method: 'DELETE' });

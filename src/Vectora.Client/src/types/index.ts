@@ -174,3 +174,32 @@ export interface UpdateSubscriptionRequest {
   forwardDeadLetteredMessagesTo?: string | null;
 }
 
+export interface MessageTemplate {
+  id: number;
+  name: string;
+  body: string;
+  contentType?: string;
+  subject?: string;
+  messageId?: string;
+  correlationId?: string;
+  sessionId?: string;
+  applicationProperties?: string;
+  sendMultiple: boolean;
+  sendCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveMessageTemplateRequest {
+  name: string;
+  body: string;
+  contentType?: string;
+  subject?: string;
+  messageId?: string;
+  correlationId?: string;
+  sessionId?: string;
+  applicationProperties?: string;
+  sendMultiple: boolean;
+  sendCount: number;
+}
+

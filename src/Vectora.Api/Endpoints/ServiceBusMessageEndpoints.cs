@@ -89,8 +89,8 @@ public static class ServiceBusMessageEndpoints
 
     private static async Task<IResult> ReceiveQueueMessages(int connectionId, string queueName, IServiceBusService serviceBusService, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
     {
-        // Validate input
-        var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages);
+        // Validate input - allow up to 100,000 for consume/purge operations
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages, 100000);
         if (!valid)
         {
             return Results.BadRequest(new { error });
@@ -106,8 +106,8 @@ public static class ServiceBusMessageEndpoints
 
     private static async Task<IResult> ReceiveSubscriptionMessages(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
     {
-        // Validate input
-        var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages);
+        // Validate input - allow up to 100,000 for consume/purge operations
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages, 100000);
         if (!valid)
         {
             return Results.BadRequest(new { error });
