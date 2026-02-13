@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen } from 'lucide-react';
+import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen, Search } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage, MessageTemplate } from '../types';
 import { sendToQueue, sendToTopic, getMessageTemplates, saveMessageTemplate, deleteMessageTemplate } from '../api/client';
@@ -83,10 +83,10 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
-  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [showLoadModal, setShowLoadModal] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState('');
   const [templateName, setTemplateName] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const templateMenuRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
   // Panel resizing state
@@ -113,18 +113,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     getMessageTemplates().then(setTemplates).catch(() => {});
   }, []);
 
-  // Close template menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (templateMenuRef.current && !templateMenuRef.current.contains(e.target as Node)) {
-        setShowTemplateMenu(false);
-      }
-    };
-    if (showTemplateMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showTemplateMenu]);
+
 
   const handleSaveTemplate = async () => {
     if (!templateName.trim()) return;
@@ -172,7 +161,8 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     } else {
       setProperties([]);
     }
-    setShowTemplateMenu(false);
+    setShowLoadModal(false);
+    setTemplateSearch('');
   };
 
   const handleDeleteTemplate = async (id: number, e: React.MouseEvent) => {
@@ -495,78 +485,24 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
           </div>
         </div>
 
-        {/* Save Template Dialog */}
-        {showSaveDialog && (
-          <div className="px-3 md:px-5 py-2 border-t border-dark-600 bg-dark-750 flex items-center gap-2">
-            <input
-              type="text"
-              value={templateName}
-              onChange={e => setTemplateName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSaveTemplate()}
-              placeholder="Template name..."
-              className="flex-1 px-3 py-1.5 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-              autoFocus
-            />
-            <button
-              onClick={handleSaveTemplate}
-              disabled={!templateName.trim()}
-              className="px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white rounded-lg text-sm disabled:opacity-50 transition-colors"
-            >
-              Save
-            </button>
-            <button
-              onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
-              className="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-white rounded-lg text-sm transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
         {/* Footer - compact on mobile, especially landscape */}
         <div className="px-3 md:px-5 py-2 md:py-4 border-t border-dark-600 flex items-center shrink-0 bg-dark-800">
           {/* Template buttons - left side */}
-          <div className="flex items-center gap-2 relative" ref={templateMenuRef}>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowSaveDialog(!showSaveDialog)}
+              onClick={() => { setShowSaveDialog(true); setTemplateName(''); }}
               className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
               title="Save as template"
             >
               <Save className="w-4 h-4" /> Save
             </button>
             <button
-              onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+              onClick={() => { setShowLoadModal(true); setTemplateSearch(''); }}
               className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
               title="Load template"
             >
               <FolderOpen className="w-4 h-4" /> Load
             </button>
-
-            {/* Template dropdown menu */}
-            {showTemplateMenu && (
-              <div className="absolute bottom-full left-0 mb-1 w-72 bg-dark-700 border border-dark-500 rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
-                {templates.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-dark-400 italic">No saved templates</div>
-                ) : (
-                  templates.map(t => (
-                    <div
-                      key={t.id}
-                      onClick={() => handleLoadTemplate(t)}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-dark-600 cursor-pointer group"
-                    >
-                      <span className="text-sm text-white truncate">{t.name}</span>
-                      <button
-                        onClick={(e) => handleDeleteTemplate(t.id, e)}
-                        className="text-dark-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2"
-                        title="Delete template"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
           </div>
 
           {/* Spacer */}
@@ -587,7 +523,137 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
           </div>
         </div>
       </div>
+
+      {/* Load Template Modal */}
+      {showLoadModal && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
+          onClick={() => { setShowLoadModal(false); setTemplateSearch(''); }}
+        >
+          <div
+            className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-md mx-4 flex flex-col shadow-2xl max-h-[70vh] overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-primary-400" />
+                Load Template
+              </h3>
+              <button
+                onClick={() => { setShowLoadModal(false); setTemplateSearch(''); }}
+                className="text-dark-400 hover:text-white transition-colors p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="px-5 py-3 border-b border-dark-700">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-400" />
+                <input
+                  type="text"
+                  value={templateSearch}
+                  onChange={e => setTemplateSearch(e.target.value)}
+                  placeholder="Search templates..."
+                  className="w-full pl-9 pr-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 placeholder-dark-400"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Template List */}
+            <div className="flex-1 overflow-y-auto">
+              {templates.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-dark-400 italic">No saved templates</div>
+              ) : (() => {
+                const filtered = templates
+                  .filter(t => t.name.toLowerCase().includes(templateSearch.toLowerCase()))
+                  .sort((a, b) => a.name.localeCompare(b.name));
+                return filtered.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-dark-400 italic">No templates match your search</div>
+                ) : (
+                  filtered.map(t => (
+                    <div
+                      key={t.id}
+                      onClick={() => handleLoadTemplate(t)}
+                      className="flex items-center justify-between px-4 py-2.5 hover:bg-dark-700 cursor-pointer group border-b border-dark-700/50 last:border-b-0"
+                    >
+                      <span className="text-sm text-white truncate">{t.name}</span>
+                      <button
+                        onClick={(e) => handleDeleteTemplate(t.id, e)}
+                        className="text-dark-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2 p-1"
+                        title="Delete template"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Template Modal */}
+      {showSaveDialog && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
+          onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
+        >
+          <div
+            className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm mx-4 shadow-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600">
+              <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                <Save className="w-4 h-4 text-primary-400" />
+                Save Template
+              </h3>
+              <button
+                onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
+                className="text-dark-400 hover:text-white transition-colors p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Name Input */}
+            <div className="px-5 py-4">
+              <label className="block text-sm font-medium text-dark-300 mb-2">Template name</label>
+              <input
+                type="text"
+                value={templateName}
+                onChange={e => setTemplateName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && templateName.trim() && handleSaveTemplate()}
+                placeholder="Enter a name..."
+                className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 placeholder-dark-400"
+                autoFocus
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="px-5 py-3 border-t border-dark-700 flex justify-end gap-2">
+              <button
+                onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
+                className="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-white rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveTemplate}
+                disabled={!templateName.trim()}
+                className="px-4 py-1.5 bg-primary-500 hover:bg-primary-400 text-white rounded-lg text-sm disabled:opacity-50 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
