@@ -294,15 +294,51 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-0 md:p-3" onClick={handleBackdropClick}>
       <div className="bg-dark-800 border border-dark-600 md:rounded-xl w-full h-full md:max-w-[95vw] md:h-[95vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 md:px-5 py-3 md:py-4 border-b border-dark-600">
-          <h2 className="text-base md:text-lg font-semibold text-white flex items-center gap-2 min-w-0">
-            <Send className="w-4 h-4 md:w-5 md:h-5 text-primary-400 flex-shrink-0" />
-            <span className="truncate">Send to {entity.name}</span>
-          </h2>
-          <button onClick={onClose} className="text-dark-400 hover:text-white transition-colors p-1">
-            <X className="w-5 h-5" />
-          </button>
+        {/* Header Toolbar with carbon fiber pattern */}
+        <div className="relative shrink-0 border-b border-dark-600">
+          {/* Carbon fiber dot pattern background */}
+          <div className="absolute inset-0 carbon-fiber-header rounded-t-xl" />
+          <div className="flex items-center px-3 md:px-5 py-2.5 md:py-3 gap-3 relative z-10">
+            {/* Title */}
+            <h2 className="text-sm md:text-base font-semibold text-white flex items-center gap-2 min-w-0">
+              <Send className="w-4 h-4 text-primary-400 flex-shrink-0" />
+              <span className="truncate">{entity.name}</span>
+            </h2>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-dark-500/50 flex-shrink-0" />
+
+            {/* Template actions */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setShowSaveDialog(true); setTemplateName(''); }}
+                className="px-2.5 py-1.5 text-dark-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-1.5 transition-all text-sm"
+                title="Save as template"
+              >
+                <Save className="w-3.5 h-3.5" /> <span className="hidden md:inline">Save</span>
+              </button>
+              <button
+                onClick={() => { setShowLoadModal(true); setTemplateSearch(''); }}
+                className="px-2.5 py-1.5 text-dark-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-1.5 transition-all text-sm"
+                title="Load template"
+              >
+                <FolderOpen className="w-3.5 h-3.5" /> <span className="hidden md:inline">Load</span>
+              </button>
+            </div>
+
+            {/* Spacer */}
+            <div className="flex-1" />
+
+            {/* Send button */}
+            <button
+              onClick={handleSend}
+              disabled={loading || !body.trim()}
+              className="px-4 md:px-6 py-1.5 md:py-2 bg-primary-500 hover:bg-primary-400 text-white rounded-lg flex items-center gap-2 text-sm font-medium disabled:opacity-50 transition-colors"
+            >
+              <Send className="w-4 h-4" />
+              <span>{loading ? 'Sending...' : sendMultiple && parseInt(sendCount) > 1 ? `Send (${sendCount}×)` : 'Send'}</span>
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -485,43 +521,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
           </div>
         </div>
 
-        {/* Footer - compact on mobile, especially landscape */}
-        <div className="px-3 md:px-5 py-2 md:py-4 border-t border-dark-600 flex items-center shrink-0 bg-dark-800">
-          {/* Template buttons - left side */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setShowSaveDialog(true); setTemplateName(''); }}
-              className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
-              title="Save as template"
-            >
-              <Save className="w-4 h-4" /> Save
-            </button>
-            <button
-              onClick={() => { setShowLoadModal(true); setTemplateSearch(''); }}
-              className="px-3 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg flex items-center gap-1.5 transition-colors text-sm"
-              title="Load template"
-            >
-              <FolderOpen className="w-4 h-4" /> Load
-            </button>
-          </div>
 
-          {/* Spacer */}
-          <div className="flex-1" />
-
-          {/* Action buttons - right side */}
-          <div className="flex items-center gap-2 md:gap-3">
-            <button onClick={onClose} className="px-3 md:px-4 py-1.5 md:py-2 bg-dark-600 hover:bg-dark-500 text-white rounded-lg transition-colors text-sm">
-              Cancel
-            </button>
-            <button
-              onClick={handleSend}
-              disabled={loading || !body.trim()}
-              className="px-3 md:px-5 py-1.5 md:py-2 bg-primary-500 hover:bg-primary-400 text-white rounded-lg flex items-center gap-1.5 md:gap-2 disabled:opacity-50 transition-colors text-sm"
-            >
-              <Send className="w-4 h-4" /> {loading ? 'Sending...' : sendMultiple && parseInt(sendCount) > 1 ? `Send (${sendCount}×)` : 'Send'}
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Load Template Modal */}

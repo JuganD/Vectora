@@ -180,7 +180,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Search - fixed height matches MessagePanel header */}
-      <div className="px-4 h-[73px] border-b border-dark-700 flex items-center">
+      <div className={`px-4 h-[73px] ${loading ? '' : 'border-b border-dark-700'} flex items-center relative`}>
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
           <input
@@ -191,13 +191,21 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             className="w-full pl-9 pr-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
+        {/* Loading wave replaces the border line */}
+        {loading && (
+          <div className="absolute bottom-0 left-0 right-0 h-[1px] overflow-hidden bg-dark-700">
+            <div className="loading-wave-line h-full w-full">
+              <div className="wave-sweep h-full w-full bg-gradient-to-r from-transparent via-primary-400 to-transparent" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Entity List */}
       <div className="flex-1 overflow-auto p-2">
         {loading ? (
-          <div className="flex items-center justify-center py-8 text-dark-400">
-            <div className="animate-pulse">Loading entities...</div>
+          <div className="flex items-center justify-center py-8 text-dark-500">
+            <p>Loading...</p>
           </div>
         ) : (
           <>

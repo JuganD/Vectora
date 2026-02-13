@@ -45,6 +45,10 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (isMobile && entity) {
       setShowMobileSidebar(false);
     }
+    // Auto-fetch runtime counts for non-emulator connections
+    if (entity && selectedConnection && !selectedConnection.isEmulator) {
+      updateEntityCount(entity);
+    }
   };
 
   const loadConnections = async () => {

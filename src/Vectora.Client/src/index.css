@@ -74,3 +74,20 @@ html, body {
   animation: slideIn 0.2s ease-out;
 }
 
+/* Loading wave animation - left to right sweep */
+@keyframes loadingWave {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.loading-wave-line .wave-sweep {
+  animation: loadingWave 1.8s ease-in-out infinite;
+}
+
+/* Carbon fiber dot pattern for send dialog */
+.carbon-fiber-header {
+  background-image:
+    radial-gradient(circle at center, rgba(14, 165, 233, 0.03) 1px, transparent 1px);
+  background-size: 8px 8px;
+}
+

@@ -341,7 +341,15 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       />
 
       {/* Header - responsive layout */}
-      <div className="px-3 md:px-4 py-2 md:py-0 md:h-[73px] border-b border-dark-700 flex flex-col md:flex-row md:items-center md:justify-between relative z-10 gap-2 md:gap-0">
+      <div className={`px-3 md:px-4 py-2 md:py-0 md:h-[73px] ${loading ? '' : 'border-b border-dark-700'} flex flex-col md:flex-row md:items-center md:justify-between relative z-10 gap-2 md:gap-0`}>
+        {/* Loading wave replaces the border line */}
+        {loading && (
+          <div className="absolute bottom-0 left-0 right-0 h-[1px] overflow-hidden bg-dark-700">
+            <div className="loading-wave-line h-full w-full">
+              <div className="wave-sweep h-full w-full bg-gradient-to-r from-transparent via-primary-400 to-transparent" />
+            </div>
+          </div>
+        )}
         {/* Top row: Entity info + primary actions */}
         <div className="flex items-center gap-2 md:gap-3 flex-wrap">
           {/* Mobile back button */}
@@ -475,7 +483,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           )}
           <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto">
             {loading ? (
-              <div className="flex items-center justify-center py-8 text-dark-400"><div className="animate-pulse">Loading messages...</div></div>
+              <div className="flex items-center justify-center py-8 text-dark-500"><p>Loading...</p></div>
             ) : messages.length === 0 ? (
               <div className="flex items-center justify-center py-8 text-dark-500"><p>No messages found</p></div>
             ) : (
