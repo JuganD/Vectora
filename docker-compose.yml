@@ -8,6 +8,7 @@ services:
       - "8080:8080"
     volumes:
       - vectora-data:/data
+    stop_grace_period: 10s
     environment:
       - VECTORA_PASSWORD=123
 

@@ -14,7 +14,7 @@ var dataPath = Environment.GetEnvironmentVariable("DataPath") ?? "./data";
 Directory.CreateDirectory(dataPath);
 var dbPath = Path.Combine(dataPath, "vectora.db");
 builder.Services.AddDbContext<VectoraDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath}"));
+    options.UseSqlite($"Data Source={dbPath};Cache=Shared;Pooling=True;Connection Lifetime=10;"));
 
 // Add helpers
 builder.Services.AddSingleton<IServiceBusClientCache, ServiceBusClientCache>();
@@ -75,5 +75,14 @@ app.MapMessageTemplateEndpoints();
 
 // Fallback to index.html for SPA routing
 app.MapFallbackToFile("index.html");
+
+// Graceful shutdown
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+lifetime.ApplicationStopping.Register(async () =>
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<VectoraDbContext>();
+    await db.Database.CloseConnectionAsync();
+});
 
 app.Run();
