@@ -14,7 +14,7 @@ var dataPath = Environment.GetEnvironmentVariable("DataPath") ?? "./data";
 Directory.CreateDirectory(dataPath);
 var dbPath = Path.Combine(dataPath, "vectora.db");
 builder.Services.AddDbContext<VectoraDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath};Cache=Shared;Pooling=True;Connection Lifetime=10;"));
+    options.UseSqlite($"Data Source={dbPath};Cache=Shared;"));
 
 // Add helpers
 builder.Services.AddSingleton<IServiceBusClientCache, ServiceBusClientCache>();
@@ -44,6 +44,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<VectoraDbContext>();
     db.Database.Migrate();
+    
+    // Enable WAL mode for better concurrency and crash recovery
+    db.Database.ExecuteSql($"PRAGMA journal_mode = 'WAL';");
+    db.Database.ExecuteSql($"PRAGMA busy_timeout = 5000;");
 }
 
 // Configure the HTTP request pipeline - order matters!
