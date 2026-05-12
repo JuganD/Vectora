@@ -87,6 +87,11 @@ Endpoint=sb://<your service bus emulator container>;SharedAccessKeyName=RootMana
 The purpose of requesting connection string for the emulator, is that you can choose to have a shared emulator, inside a virtual private network. In that case, the endpoint will be different.
 
 ## Development
+You are assuming correctly, it is an AI project. But also one that I'm using every single day.  
+It's very important for me that this project works correctly and it outperforms the alternatives.  
+Yes, it's not perfect.  
+Yes, AI generated a lot of redundant and unoptimized code.  
+It is a tool, not an enterprise project. It gets the job done.
 
 ### Prerequisites
 

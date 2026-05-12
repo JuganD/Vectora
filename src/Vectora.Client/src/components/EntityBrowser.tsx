@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X, Trash2, Pencil } from 'lucide-react';
-import type { Connection, QueueInfo, TopicInfo, SelectedEntity } from '../types';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X, Trash2, Pencil, Loader2 } from 'lucide-react';
+import type { Connection, QueueInfo, TopicInfo, SubscriptionInfo, SelectedEntity } from '../types';
 import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription } from '../api/client';
 import EditEntityDialog from './EditEntityDialog';
+
+const subscriptionKey = (topicName: string, subName: string) => `${topicName}/${subName}`;
 
 interface EntityBrowserProps {
   connection: Connection | null;
@@ -45,6 +47,59 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   // Edit state
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
 
+  // Per-entity loading state: an entity is "pending" when its create/update/delete
+  // is in flight or the refresh that reflects it has not yet completed. Routine
+  // refreshes don't populate these sets, so the rest of the list stays interactive.
+  const [pendingQueues, setPendingQueues] = useState<Set<string>>(new Set());
+  const [pendingTopics, setPendingTopics] = useState<Set<string>>(new Set());
+  const [pendingSubscriptions, setPendingSubscriptions] = useState<Set<string>>(new Set());
+  const [optimisticQueues, setOptimisticQueues] = useState<QueueInfo[]>([]);
+  const [optimisticTopics, setOptimisticTopics] = useState<TopicInfo[]>([]);
+  const [optimisticSubscriptions, setOptimisticSubscriptions] = useState<Array<{ topicName: string; sub: SubscriptionInfo }>>([]);
+
+  // Clear pending + optimistic state once a refresh completes — the server's
+  // response is now authoritative for the entities we were waiting on.
+  const prevLoadingRef = useRef(loading);
+  useEffect(() => {
+    if (prevLoadingRef.current && !loading) {
+      setPendingQueues(new Set());
+      setPendingTopics(new Set());
+      setPendingSubscriptions(new Set());
+      setOptimisticQueues([]);
+      setOptimisticTopics([]);
+      setOptimisticSubscriptions([]);
+    }
+    prevLoadingRef.current = loading;
+  }, [loading]);
+
+  const mergedQueues = useMemo(() => {
+    if (optimisticQueues.length === 0) return queues;
+    const names = new Set(queues.map(q => q.name));
+    return [...queues, ...optimisticQueues.filter(q => !names.has(q.name))];
+  }, [queues, optimisticQueues]);
+
+  const mergedTopics = useMemo<TopicInfo[]>(() => {
+    if (optimisticTopics.length === 0 && optimisticSubscriptions.length === 0) return topics;
+    const existingNames = new Set(topics.map(t => t.name));
+    const base: TopicInfo[] = [
+      ...topics,
+      ...optimisticTopics.filter(t => !existingNames.has(t.name)),
+    ];
+    if (optimisticSubscriptions.length === 0) return base;
+    return base.map(t => {
+      const extras = optimisticSubscriptions.filter(s => s.topicName === t.name);
+      if (extras.length === 0) return t;
+      const subNames = new Set(t.subscriptions.map(s => s.name));
+      return {
+        ...t,
+        subscriptions: [
+          ...t.subscriptions,
+          ...extras.filter(e => !subNames.has(e.sub.name)).map(e => e.sub),
+        ],
+      };
+    });
+  }, [topics, optimisticTopics, optimisticSubscriptions]);
+
   const openEditDialog = (type: EntityType, name: string, topicName?: string) => {
     setEditTarget({ type, name, topicName });
   };
@@ -62,8 +117,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
     });
   };
 
-  const filteredQueues = queues.filter(q => q.name.toLowerCase().includes(searchTerm.toLowerCase()));
-  const filteredTopics = topics.filter(t =>
+  const filteredQueues = mergedQueues.filter(q => q.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredTopics = mergedTopics.filter(t =>
     t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     t.subscriptions.some(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -74,15 +129,23 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
       setCreateError('Please select a topic');
       return;
     }
+    const name = createName.trim();
+    const topicForSub = createTopicName;
     setCreating(true);
     setCreateError('');
     try {
       if (createMode === 'queue') {
-        await createQueue(connection.id, { name: createName.trim() });
+        await createQueue(connection.id, { name });
+        setOptimisticQueues(prev => [...prev, { name, activeMessageCount: 0, deadLetterMessageCount: 0, isEmulator: connection.isEmulator }]);
+        setPendingQueues(prev => new Set(prev).add(name));
       } else if (createMode === 'topic') {
-        await createTopic(connection.id, { name: createName.trim() });
+        await createTopic(connection.id, { name });
+        setOptimisticTopics(prev => [...prev, { name, subscriptions: [], isEmulator: connection.isEmulator }]);
+        setPendingTopics(prev => new Set(prev).add(name));
       } else if (createMode === 'subscription') {
-        await createSubscription(connection.id, createTopicName, { name: createName.trim() });
+        await createSubscription(connection.id, topicForSub, { name });
+        setOptimisticSubscriptions(prev => [...prev, { topicName: topicForSub, sub: { name, activeMessageCount: 0, deadLetterMessageCount: 0 } }]);
+        setPendingSubscriptions(prev => new Set(prev).add(subscriptionKey(topicForSub, name)));
       }
       setCreateMode(null);
       setCreateName('');
@@ -114,20 +177,24 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   const handleDelete = async () => {
     if (!connection || !deleteTarget) return;
     setDeleting(true);
+    const target = deleteTarget;
     try {
-      if (deleteTarget.type === 'queue') {
-        await deleteQueue(connection.id, deleteTarget.name);
-        if (selectedEntity?.type === 'queue' && selectedEntity.name === deleteTarget.name) {
+      if (target.type === 'queue') {
+        await deleteQueue(connection.id, target.name);
+        setPendingQueues(prev => new Set(prev).add(target.name));
+        if (selectedEntity?.type === 'queue' && selectedEntity.name === target.name) {
           onSelectEntity(null);
         }
-      } else if (deleteTarget.type === 'topic') {
-        await deleteTopic(connection.id, deleteTarget.name);
-        if (selectedEntity?.type === 'topic' && selectedEntity.name === deleteTarget.name) {
+      } else if (target.type === 'topic') {
+        await deleteTopic(connection.id, target.name);
+        setPendingTopics(prev => new Set(prev).add(target.name));
+        if (selectedEntity?.type === 'topic' && selectedEntity.name === target.name) {
           onSelectEntity(null);
         }
-      } else if (deleteTarget.type === 'subscription' && deleteTarget.topicName) {
-        await deleteSubscription(connection.id, deleteTarget.topicName, deleteTarget.name);
-        if (selectedEntity?.type === 'subscription' && selectedEntity.name === deleteTarget.name) {
+      } else if (target.type === 'subscription' && target.topicName) {
+        await deleteSubscription(connection.id, target.topicName, target.name);
+        setPendingSubscriptions(prev => new Set(prev).add(subscriptionKey(target.topicName!, target.name)));
+        if (selectedEntity?.type === 'subscription' && selectedEntity.name === target.name) {
           onSelectEntity(null);
         }
       }
@@ -138,6 +205,21 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
     } finally {
       setDeleting(false);
     }
+  };
+
+  // Wrap the edit dialog's onSaved so the edited entity is flagged pending
+  // until the post-save refresh completes.
+  const handleEditSaved = () => {
+    if (editTarget) {
+      if (editTarget.type === 'queue') {
+        setPendingQueues(prev => new Set(prev).add(editTarget.name));
+      } else if (editTarget.type === 'topic') {
+        setPendingTopics(prev => new Set(prev).add(editTarget.name));
+      } else if (editTarget.type === 'subscription' && editTarget.topicName) {
+        setPendingSubscriptions(prev => new Set(prev).add(subscriptionKey(editTarget.topicName!, editTarget.name)));
+      }
+    }
+    onRefresh();
   };
 
   // Close dialogs on Escape key
@@ -208,7 +290,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             <p>Loading...</p>
           </div>
         ) : (
-          <div className={loading ? 'opacity-60 pointer-events-none transition-opacity' : 'transition-opacity'}>
+          <>
             {/* Queues Section */}
             <div className="mb-4">
               <div className="flex items-center justify-between px-2 py-1">
@@ -231,6 +313,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   onDelete={() => openDeleteDialog('queue', queue.name)}
                   onEdit={queue.isEmulator ? undefined : () => openEditDialog('queue', queue.name)}
                   isEmulator={queue.isEmulator}
+                  pending={pendingQueues.has(queue.name)}
                 />
               ))}
               {filteredQueues.length === 0 && !searchTerm && (
@@ -263,6 +346,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                     onEdit={topic.isEmulator ? undefined : () => openEditDialog('topic', topic.name)}
                     onAddSubscription={() => { setCreateMode('subscription'); setCreateTopicName(topic.name); }}
                     isEmulator={topic.isEmulator}
+                    pending={pendingTopics.has(topic.name)}
                   />
                   {expandedTopics.has(topic.name) && (
                     <div className="ml-6 border-l border-dark-700 pl-2">
@@ -278,6 +362,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                           onDelete={() => openDeleteDialog('subscription', sub.name, topic.name)}
                           onEdit={topic.isEmulator ? undefined : () => openEditDialog('subscription', sub.name, topic.name)}
                           isEmulator={topic.isEmulator}
+                          pending={pendingSubscriptions.has(subscriptionKey(topic.name, sub.name))}
                         />
                       ))}
                     </div>
@@ -288,7 +373,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                 <div className="text-xs text-dark-500 px-2 py-1 italic">No topics</div>
               )}
             </div>
-          </div>
+          </>
         )}
       </div>
 
@@ -388,7 +473,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
           queues={queues}
           topics={topics}
           onClose={closeEditDialog}
-          onSaved={onRefresh}
+          onSaved={handleEditSaved}
         />
       )}
     </div>
@@ -405,9 +490,20 @@ interface EntityItemProps {
   onDelete: () => void;
   onEdit?: () => void;
   isEmulator?: boolean;
+  pending?: boolean;
 }
 
-function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator }: EntityItemProps) {
+function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending }: EntityItemProps) {
+  if (pending) {
+    return (
+      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
+        <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
+        <span className="flex-1 truncate text-sm text-dark-400">{name}</span>
+        <span className="text-xs bg-dark-700 px-1.5 py-0.5 rounded text-dark-500">{activeCount}</span>
+        <span className="text-xs bg-red-500/10 text-red-300/60 px-1.5 py-0.5 rounded">{deadLetterCount}</span>
+      </div>
+    );
+  }
   const [isOpen, setIsOpen] = useState(false);
   const [, forceUpdate] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -595,9 +691,21 @@ interface TopicItemProps {
   onEdit?: () => void;
   onAddSubscription: () => void;
   isEmulator?: boolean;
+  pending?: boolean;
 }
 
-function TopicItem({ name, subscriptionCount, isExpanded, isSelected, onClick, onDelete, onEdit, onAddSubscription, isEmulator }: TopicItemProps) {
+function TopicItem({ name, subscriptionCount, isExpanded, isSelected, onClick, onDelete, onEdit, onAddSubscription, isEmulator, pending }: TopicItemProps) {
+  if (pending) {
+    return (
+      <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
+        <ChevronRight className="w-4 h-4 text-dark-500" />
+        <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
+        <span className="flex-1 truncate text-sm text-dark-400">{name}</span>
+        <span className="text-xs text-dark-500">{subscriptionCount}</span>
+      </div>
+    );
+  }
+
   const canSwipe = !isEmulator; // No swipe actions for emulator
 
   // For emulator, render simple non-swipeable item
