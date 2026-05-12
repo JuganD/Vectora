@@ -202,13 +202,13 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
       </div>
 
       {/* Entity List */}
-      <div className="flex-1 overflow-auto p-2">
-        {loading ? (
+      <div className="flex-1 overflow-auto p-2 relative">
+        {loading && queues.length === 0 && topics.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-dark-500">
             <p>Loading...</p>
           </div>
         ) : (
-          <>
+          <div className={loading ? 'opacity-60 pointer-events-none transition-opacity' : 'transition-opacity'}>
             {/* Queues Section */}
             <div className="mb-4">
               <div className="flex items-center justify-between px-2 py-1">
@@ -288,7 +288,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                 <div className="text-xs text-dark-500 px-2 py-1 italic">No topics</div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
 

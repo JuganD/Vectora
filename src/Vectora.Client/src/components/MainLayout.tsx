@@ -67,19 +67,38 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     }
   };
 
-  const loadEntities = async () => {
+  const entitiesAbortRef = useRef<AbortController | null>(null);
+
+  const loadEntities = useCallback(async (refreshCache = false) => {
     if (!selectedConnection) return;
+    // Cancel any in-flight fetch so a slow previous response can't overwrite
+    // entities for the currently selected connection.
+    entitiesAbortRef.current?.abort();
+    const controller = new AbortController();
+    entitiesAbortRef.current = controller;
+    const connectionId = selectedConnection.id;
+
     setLoading(true);
     try {
-      const data = await getEntities(selectedConnection.id);
+      const data = await getEntities(connectionId, refreshCache, controller.signal);
+      if (controller.signal.aborted) return;
       setQueues(data.queues);
       setTopics(data.topics);
     } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') return;
       console.error('Failed to load entities:', error);
     } finally {
-      setLoading(false);
+      if (entitiesAbortRef.current === controller) {
+        entitiesAbortRef.current = null;
+      }
+      // Clear loading unless a newer fetch has taken over.
+      if (entitiesAbortRef.current === null) {
+        setLoading(false);
+      }
     }
-  };
+  }, [selectedConnection]);
+
+  const refreshEntities = useCallback(() => loadEntities(true), [loadEntities]);
 
   const handleSelectConnection = (conn: Connection | null) => {
     setSelectedConnection(conn);
@@ -114,11 +133,20 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   }, []);
 
   useEffect(() => {
+    // Clear stale entities the moment the user switches connections; the
+    // previous fetch (if any) is aborted in loadEntities so its response can't
+    // race the new one.
+    setQueues([]);
+    setTopics([]);
+    setSelectedEntity(null);
     if (selectedConnection) {
       loadEntities();
-      setSelectedEntity(null);
     }
-  }, [selectedConnection]);
+    return () => {
+      entitiesAbortRef.current?.abort();
+      entitiesAbortRef.current = null;
+    };
+  }, [selectedConnection, loadEntities]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -225,7 +253,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
 
           {selectedConnection && !isMobile && (
             <button
-              onClick={loadEntities}
+              onClick={refreshEntities}
               disabled={loading}
               className="p-2 text-dark-400 hover:text-white transition-colors"
               title="Refresh entities"
@@ -335,7 +363,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             topics={topics}
             selectedEntity={selectedEntity}
             onSelectEntity={handleSelectEntity}
-            onRefresh={loadEntities}
+            onRefresh={refreshEntities}
             loading={loading}
           />
         </div>

@@ -60,9 +60,9 @@ public static class ServiceBusEndpoints
             .WithName("DeleteSubscription");
     }
 
-    private static async Task<IResult> GetEntities(int connectionId, IServiceBusService serviceBusService)
+    private static async Task<IResult> GetEntities(int connectionId, IServiceBusService serviceBusService, HttpContext context, bool? refreshCache)
     {
-        var result = await serviceBusService.GetEntitiesAsync(connectionId);
+        var result = await serviceBusService.GetEntitiesAsync(connectionId, refreshCache ?? false, context.RequestAborted);
         if (result == null)
         {
             return Results.NotFound("Connection not found");

@@ -18,6 +18,7 @@ builder.Services.AddDbContext<VectoraDbContext>(options =>
 
 // Add helpers
 builder.Services.AddSingleton<IServiceBusClientCache, ServiceBusClientCache>();
+builder.Services.AddSingleton<IServiceBusEntityCache, ServiceBusEntityCache>();
 
 // Add repositories
 builder.Services.AddScoped<IConnectionRepository, ConnectionRepository>();

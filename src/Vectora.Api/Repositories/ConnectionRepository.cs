@@ -9,11 +9,13 @@ public class ConnectionRepository : IConnectionRepository
 {
     private readonly VectoraDbContext _db;
     private readonly IServiceBusClientCache _clientCache;
+    private readonly IServiceBusEntityCache _entityCache;
 
-    public ConnectionRepository(VectoraDbContext db, IServiceBusClientCache clientCache)
+    public ConnectionRepository(VectoraDbContext db, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache)
     {
         _db = db;
         _clientCache = clientCache;
+        _entityCache = entityCache;
     }
 
     public async Task<List<ServiceBusConnection>> GetAllAsync()
@@ -61,8 +63,9 @@ public class ConnectionRepository : IConnectionRepository
 
         await _db.SaveChangesAsync();
 
-        // Invalidate cached clients for this connection
+        // Invalidate cached clients and entities for this connection
         _clientCache.InvalidateConnection(id);
+        _entityCache.Invalidate(id);
 
         return connection;
     }
@@ -77,8 +80,9 @@ public class ConnectionRepository : IConnectionRepository
         _db.Connections.Remove(connection);
         await _db.SaveChangesAsync();
 
-        // Invalidate cached clients for this connection
+        // Invalidate cached clients and entities for this connection
         _clientCache.InvalidateConnection(id);
+        _entityCache.Invalidate(id);
 
         return true;
     }

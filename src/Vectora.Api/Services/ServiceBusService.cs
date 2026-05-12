@@ -11,20 +11,27 @@ public class ServiceBusService : IServiceBusService
     private readonly IConnectionRepository _connectionRepository;
     private readonly IEmulatorConfigService _emulatorConfigService;
     private readonly IServiceBusClientCache _clientCache;
+    private readonly IServiceBusEntityCache _entityCache;
     private readonly ISettingsService _settingsService;
 
-    public ServiceBusService(IConnectionRepository connectionRepository, IEmulatorConfigService emulatorConfigService, IServiceBusClientCache clientCache, ISettingsService settingsService)
+    public ServiceBusService(IConnectionRepository connectionRepository, IEmulatorConfigService emulatorConfigService, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService)
     {
         _connectionRepository = connectionRepository;
         _emulatorConfigService = emulatorConfigService;
         _clientCache = clientCache;
+        _entityCache = entityCache;
         _settingsService = settingsService;
     }
 
-    public async Task<(List<QueueInfoDto> Queues, List<TopicInfoDto> Topics)?> GetEntitiesAsync(int connectionId)
+    public async Task<(List<QueueInfoDto> Queues, List<TopicInfoDto> Topics)?> GetEntitiesAsync(int connectionId, bool refreshCache = false, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
+
+        if (!refreshCache && _entityCache.TryGet(connectionId, out var cached))
+        {
+            return cached;
+        }
 
         var queues = new List<QueueInfoDto>();
         var topics = new List<TopicInfoDto>();
@@ -48,15 +55,15 @@ public class ServiceBusService : IServiceBusService
             // For real Service Bus: use Administration client
             var adminClient = _clientCache.GetAdminClient(connectionId, connection.ConnectionString);
 
-            await foreach (var queue in adminClient.GetQueuesRuntimePropertiesAsync())
+            await foreach (var queue in adminClient.GetQueuesRuntimePropertiesAsync(cancellationToken))
             {
                 queues.Add(new QueueInfoDto { Name = queue.Name, ActiveMessageCount = queue.ActiveMessageCount, DeadLetterMessageCount = queue.DeadLetterMessageCount, IsEmulator = false });
             }
 
-            await foreach (var topic in adminClient.GetTopicsAsync())
+            await foreach (var topic in adminClient.GetTopicsAsync(cancellationToken))
             {
                 var subs = new List<SubscriptionInfoDto>();
-                await foreach (var sub in adminClient.GetSubscriptionsRuntimePropertiesAsync(topic.Name))
+                await foreach (var sub in adminClient.GetSubscriptionsRuntimePropertiesAsync(topic.Name, cancellationToken))
                 {
                     subs.Add(new SubscriptionInfoDto { Name = sub.SubscriptionName, ActiveMessageCount = sub.ActiveMessageCount, DeadLetterMessageCount = sub.DeadLetterMessageCount });
                 }
@@ -64,7 +71,9 @@ public class ServiceBusService : IServiceBusService
             }
         }
 
-        return (queues.OrderBy(q => q.Name).ToList(), topics.OrderBy(t => t.Name).ToList());
+        var result = (queues.OrderBy(q => q.Name).ToList(), topics.OrderBy(t => t.Name).ToList());
+        _entityCache.Set(connectionId, result.Item1, result.Item2);
+        return result;
     }
 
     public async Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName)
@@ -610,6 +619,7 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.AddQueueToConfigAsync(connection.EmulatorConfigId.Value, dto.Name);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
@@ -648,6 +658,7 @@ public class ServiceBusService : IServiceBusService
             options.ForwardDeadLetteredMessagesTo = dto.ForwardDeadLetteredMessagesTo;
         }
         await adminClient.CreateQueueAsync(options);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -659,6 +670,7 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.AddTopicToConfigAsync(connection.EmulatorConfigId.Value, dto.Name);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
@@ -673,6 +685,7 @@ public class ServiceBusService : IServiceBusService
             options.RequiresDuplicateDetection = dto.RequiresDuplicateDetection.Value;
         }
         await adminClient.CreateTopicAsync(options);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -684,6 +697,7 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.AddSubscriptionToConfigAsync(connection.EmulatorConfigId.Value, topicName, dto.Name);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
@@ -718,6 +732,7 @@ public class ServiceBusService : IServiceBusService
             options.ForwardDeadLetteredMessagesTo = dto.ForwardDeadLetteredMessagesTo;
         }
         await adminClient.CreateSubscriptionAsync(options);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -751,6 +766,7 @@ public class ServiceBusService : IServiceBusService
         props.Value.ForwardTo = dto.ForwardTo;
         props.Value.ForwardDeadLetteredMessagesTo = dto.ForwardDeadLetteredMessagesTo;
         await adminClient.UpdateQueueAsync(props.Value);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -770,6 +786,7 @@ public class ServiceBusService : IServiceBusService
             props.Value.DefaultMessageTimeToLive = dto.DefaultMessageTimeToLive.Value;
         }
         await adminClient.UpdateTopicAsync(props.Value);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -803,6 +820,7 @@ public class ServiceBusService : IServiceBusService
         props.Value.ForwardTo = dto.ForwardTo;
         props.Value.ForwardDeadLetteredMessagesTo = dto.ForwardDeadLetteredMessagesTo;
         await adminClient.UpdateSubscriptionAsync(props.Value);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -814,11 +832,13 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.DeleteQueueFromConfigAsync(connection.EmulatorConfigId.Value, queueName);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
         var adminClient = _clientCache.GetAdminClient(connectionId, connection.ConnectionString);
         await adminClient.DeleteQueueAsync(queueName);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -830,11 +850,13 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.DeleteTopicFromConfigAsync(connection.EmulatorConfigId.Value, topicName);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
         var adminClient = _clientCache.GetAdminClient(connectionId, connection.ConnectionString);
         await adminClient.DeleteTopicAsync(topicName);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 
@@ -846,11 +868,13 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             await _emulatorConfigService.DeleteSubscriptionFromConfigAsync(connection.EmulatorConfigId.Value, topicName, subscriptionName);
+            _entityCache.Invalidate(connectionId);
             return true;
         }
 
         var adminClient = _clientCache.GetAdminClient(connectionId, connection.ConnectionString);
         await adminClient.DeleteSubscriptionAsync(topicName, subscriptionName);
+        _entityCache.Invalidate(connectionId);
         return true;
     }
 }

@@ -87,8 +87,11 @@ export const deleteEmulatorConfig = (id: number) =>
   fetchApi<void>(`/emulator-configs/${id}`, { method: 'DELETE' });
 
 // Service Bus entities
-export const getEntities = (connectionId: number) => 
-  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(`/connections/${connectionId}/servicebus/entities`);
+export const getEntities = (connectionId: number, refreshCache = false, signal?: AbortSignal) =>
+  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(
+    `/connections/${connectionId}/servicebus/entities${refreshCache ? '?refreshCache=true' : ''}`,
+    { signal }
+  );
 
 // Queue operations
 export const getQueueRuntimeInfo = (connectionId: number, queueName: string) =>
