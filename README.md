@@ -28,7 +28,7 @@ A modern, self-hosted Azure Service Bus explorer — a lightweight alternative t
    ```yaml
    services:
      vectora:
-       image: jugand/vectora:latest
+       image: lyubomirhristovv/vectora:latest
        restart: unless-stopped
        ports:
          - "8080:8080"
