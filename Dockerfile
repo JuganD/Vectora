@@ -7,7 +7,7 @@ COPY src/Vectora.Client/ ./
 RUN npm run build
 
 # Build stage for backend
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS backend-build
 WORKDIR /app
 COPY src/Vectora.Api/*.csproj ./
 RUN dotnet restore Vectora.Api.csproj
@@ -15,11 +15,11 @@ COPY src/Vectora.Api/ ./
 RUN dotnet publish Vectora.Api.csproj -c Release -o out
 
 # Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS runtime
 WORKDIR /app
 
 # Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl
 
 # Create directories for data and emulator configs with proper permissions
 RUN mkdir -p /data /emulator-configs && \
