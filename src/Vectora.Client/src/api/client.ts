@@ -3,7 +3,8 @@ import type {
   CreateConnectionRequest, CreateQueueRequest, CreateTopicRequest, CreateSubscriptionRequest,
   EmulatorConfig, QueueProperties, TopicProperties, SubscriptionProperties,
   UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest,
-  MessageTemplate, SaveMessageTemplateRequest
+  MessageTemplate, SaveMessageTemplateRequest,
+  SessionScanResult, SessionMessageScanResult
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -132,6 +133,18 @@ export const peekQueueMessages = (connectionId: number, queueName: string, maxMe
   fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages?maxMessages=${maxMessages}&deadLetter=${deadLetter}${fromSequenceNumber ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
 export const peekSubscriptionMessages = (connectionId: number, topicName: string, subscriptionName: string, maxMessages = 50, deadLetter = false, fromSequenceNumber?: number) =>
   fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages?maxMessages=${maxMessages}&deadLetter=${deadLetter}${fromSequenceNumber ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+
+// Sessions (read-only peek; group by session id, then browse a single session).
+// Page through deep queues by passing the previous result's lastSequenceNumber + 1.
+export const scanQueueSessions = (connectionId: number, queueName: string, deadLetter = false, fromSequenceNumber?: number, scanLimit = 1000) =>
+  fetchApi<SessionScanResult>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/sessions?deadLetter=${deadLetter}&scanLimit=${scanLimit}${fromSequenceNumber != null ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+export const scanSubscriptionSessions = (connectionId: number, topicName: string, subscriptionName: string, deadLetter = false, fromSequenceNumber?: number, scanLimit = 1000) =>
+  fetchApi<SessionScanResult>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/sessions?deadLetter=${deadLetter}&scanLimit=${scanLimit}${fromSequenceNumber != null ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+
+export const peekQueueSessionMessages = (connectionId: number, queueName: string, sessionId: string, deadLetter = false, fromSequenceNumber?: number, scanLimit = 1000) =>
+  fetchApi<SessionMessageScanResult>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/sessions/messages?sessionId=${encodeURIComponent(sessionId)}&deadLetter=${deadLetter}&scanLimit=${scanLimit}${fromSequenceNumber != null ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
+export const peekSubscriptionSessionMessages = (connectionId: number, topicName: string, subscriptionName: string, sessionId: string, deadLetter = false, fromSequenceNumber?: number, scanLimit = 1000) =>
+  fetchApi<SessionMessageScanResult>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/sessions/messages?sessionId=${encodeURIComponent(sessionId)}&deadLetter=${deadLetter}&scanLimit=${scanLimit}${fromSequenceNumber != null ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
 
 export const receiveQueueMessages = (connectionId: number, queueName: string, maxMessages = 10, deadLetter = false) =>
   fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });

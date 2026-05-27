@@ -6,4 +6,5 @@ public class QueueInfoDto
     public long ActiveMessageCount { get; set; }
     public long DeadLetterMessageCount { get; set; }
     public bool IsEmulator { get; set; }
+    public bool RequiresSession { get; set; }
 }

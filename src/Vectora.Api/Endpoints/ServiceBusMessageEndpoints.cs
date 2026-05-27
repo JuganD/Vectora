@@ -18,6 +18,19 @@ public static class ServiceBusMessageEndpoints
         group.MapGet("/topics/{topicName}/subscriptions/{subscriptionName}/messages", PeekSubscriptionMessages)
             .WithName("PeekSubscriptionMessages");
 
+        // Session operations (read-only peek; group by session id and browse a single session)
+        group.MapGet("/queues/{queueName}/sessions", ScanQueueSessions)
+            .WithName("ScanQueueSessions");
+
+        group.MapGet("/topics/{topicName}/subscriptions/{subscriptionName}/sessions", ScanSubscriptionSessions)
+            .WithName("ScanSubscriptionSessions");
+
+        group.MapGet("/queues/{queueName}/sessions/messages", PeekQueueSessionMessages)
+            .WithName("PeekQueueSessionMessages");
+
+        group.MapGet("/topics/{topicName}/subscriptions/{subscriptionName}/sessions/messages", PeekSubscriptionSessionMessages)
+            .WithName("PeekSubscriptionSessionMessages");
+
         // Receive operations
         group.MapPost("/queues/{queueName}/messages/receive", ReceiveQueueMessages)
             .WithName("ReceiveQueueMessages");
@@ -85,6 +98,78 @@ public static class ServiceBusMessageEndpoints
             return Results.NotFound("Connection not found");
         }
         return Results.Ok(messages);
+    }
+
+    private static async Task<IResult> ScanQueueSessions(int connectionId, string queueName, IServiceBusService serviceBusService, [FromQuery] bool deadLetter = false, [FromQuery] long? fromSequenceNumber = null, [FromQuery] int scanLimit = 1000)
+    {
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(scanLimit);
+        if (!valid)
+        {
+            return Results.BadRequest(new { error });
+        }
+
+        var result = await serviceBusService.ScanSessionsAsync(connectionId, queueName, null, deadLetter, fromSequenceNumber, scanLimit);
+        if (result == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> ScanSubscriptionSessions(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, [FromQuery] bool deadLetter = false, [FromQuery] long? fromSequenceNumber = null, [FromQuery] int scanLimit = 1000)
+    {
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(scanLimit);
+        if (!valid)
+        {
+            return Results.BadRequest(new { error });
+        }
+
+        var result = await serviceBusService.ScanSessionsAsync(connectionId, topicName, subscriptionName, deadLetter, fromSequenceNumber, scanLimit);
+        if (result == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> PeekQueueSessionMessages(int connectionId, string queueName, IServiceBusService serviceBusService, [FromQuery] string sessionId, [FromQuery] bool deadLetter = false, [FromQuery] long? fromSequenceNumber = null, [FromQuery] int scanLimit = 1000)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            return Results.BadRequest(new { error = "sessionId is required" });
+        }
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(scanLimit);
+        if (!valid)
+        {
+            return Results.BadRequest(new { error });
+        }
+
+        var result = await serviceBusService.PeekSessionMessagesAsync(connectionId, queueName, null, sessionId, deadLetter, fromSequenceNumber, scanLimit);
+        if (result == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> PeekSubscriptionSessionMessages(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, [FromQuery] string sessionId, [FromQuery] bool deadLetter = false, [FromQuery] long? fromSequenceNumber = null, [FromQuery] int scanLimit = 1000)
+    {
+        if (string.IsNullOrEmpty(sessionId))
+        {
+            return Results.BadRequest(new { error = "sessionId is required" });
+        }
+        var (valid, error) = ValidationHelper.ValidateMaxMessages(scanLimit);
+        if (!valid)
+        {
+            return Results.BadRequest(new { error });
+        }
+
+        var result = await serviceBusService.PeekSessionMessagesAsync(connectionId, topicName, subscriptionName, sessionId, deadLetter, fromSequenceNumber, scanLimit);
+        if (result == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> ReceiveQueueMessages(int connectionId, string queueName, IServiceBusService serviceBusService, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)

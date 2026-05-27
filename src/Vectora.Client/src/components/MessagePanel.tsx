@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu } from 'lucide-react';
-import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage } from '../types';
-import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch } from '../api/client';
+import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers } from 'lucide-react';
+import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo } from '../types';
+import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 
@@ -34,7 +34,46 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [detailsTab, setDetailsTab] = useState<'body' | 'properties'>('body');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Session view: browse messages grouped by session id. Everything here is peek-only
+  // (read-only) and pages through the entity by sequence number, so it never locks a
+  // session or disrupts live consumers.
+  const [sessionView, setSessionView] = useState(false);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [loadingMoreSessions, setLoadingMoreSessions] = useState(false);
+  const [sessionCursor, setSessionCursor] = useState<number | null>(null);
+  const [sessionsReachedEnd, setSessionsReachedEnd] = useState(false);
+  const [sessionScannedTotal, setSessionScannedTotal] = useState(0);
+  // When a session is opened, its messages are loaded into `messages` for reuse of the
+  // existing list/detail panes; these track that drill-in's own paging cursor.
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [sessionMsgLoading, setSessionMsgLoading] = useState(false);
+  const [loadingMoreSessionMsgs, setLoadingMoreSessionMsgs] = useState(false);
+  const [sessionMsgCursor, setSessionMsgCursor] = useState<number | null>(null);
+  const [sessionMsgReachedEnd, setSessionMsgReachedEnd] = useState(false);
+  const [sessionMsgScannedTotal, setSessionMsgScannedTotal] = useState(0);
+
   const PAGE_SIZE = 50;
+  const SESSION_SCAN_LIMIT = 1000;
+
+  const getEntityInfo = () => {
+    if (!selectedEntity) return null;
+    if (selectedEntity.type === 'queue') {
+      return queues.find(q => q.name === selectedEntity.name);
+    } else if (selectedEntity.type === 'subscription' && selectedEntity.topicName) {
+      const topic = topics.find(t => t.name === selectedEntity.topicName);
+      return topic?.subscriptions.find(s => s.name === selectedEntity.name);
+    }
+    return null;
+  };
+
+  const entityInfo = getEntityInfo();
+  // Sessions only apply to session-enabled queues/subscriptions; topics are never selectable here.
+  const isSessionEntity = !!entityInfo?.requiresSession;
+  // True once a session has been opened and we're showing that session's messages.
+  const inSessionMessages = sessionView && selectedSession !== null;
+  // Any in-flight load, used for the header spinner/refresh state across all modes.
+  const busy = loading || sessionsLoading || sessionMsgLoading;
 
   const loadMessages = async () => {
     if (!connection || !selectedEntity) return;
@@ -84,6 +123,105 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     }
   };
 
+  // Peek one page of messages and fold the per-session counts into the running list.
+  // `reset` starts a fresh scan; otherwise it continues from the last sequence number.
+  const scanSessions = async (reset: boolean) => {
+    if (!connection || !selectedEntity) return;
+    if (reset) {
+      setSessionsLoading(true);
+      setSessions([]);
+      setSessionScannedTotal(0);
+      setSessionsReachedEnd(false);
+      setSessionCursor(null);
+    } else {
+      setLoadingMoreSessions(true);
+    }
+    try {
+      const from = reset ? undefined : (sessionCursor != null ? sessionCursor + 1 : undefined);
+      const result = selectedEntity.type === 'queue'
+        ? await scanQueueSessions(connection.id, selectedEntity.name, showDeadLetter, from, SESSION_SCAN_LIMIT)
+        : selectedEntity.type === 'subscription' && selectedEntity.topicName
+          ? await scanSubscriptionSessions(connection.id, selectedEntity.topicName, selectedEntity.name, showDeadLetter, from, SESSION_SCAN_LIMIT)
+          : null;
+      if (!result) return;
+      setSessions(prev => mergeSessions(reset ? [] : prev, result.sessions));
+      setSessionScannedTotal(prev => (reset ? 0 : prev) + result.scannedCount);
+      setSessionsReachedEnd(result.reachedEnd);
+      setSessionCursor(result.lastSequenceNumber);
+    } catch (error) {
+      console.error('Failed to scan sessions:', error);
+    } finally {
+      setSessionsLoading(false);
+      setLoadingMoreSessions(false);
+    }
+  };
+
+  // Peek a page and keep only the chosen session's messages, paging the same way.
+  const loadSessionMessages = async (sessionId: string, reset: boolean) => {
+    if (!connection || !selectedEntity) return;
+    if (reset) {
+      setSessionMsgLoading(true);
+      setMessages([]);
+      setSelectedMessage(null);
+      setSessionMsgScannedTotal(0);
+      setSessionMsgReachedEnd(false);
+      setSessionMsgCursor(null);
+    } else {
+      setLoadingMoreSessionMsgs(true);
+    }
+    try {
+      const from = reset ? undefined : (sessionMsgCursor != null ? sessionMsgCursor + 1 : undefined);
+      const result = selectedEntity.type === 'queue'
+        ? await peekQueueSessionMessages(connection.id, selectedEntity.name, sessionId, showDeadLetter, from, SESSION_SCAN_LIMIT)
+        : selectedEntity.type === 'subscription' && selectedEntity.topicName
+          ? await peekSubscriptionSessionMessages(connection.id, selectedEntity.topicName, selectedEntity.name, sessionId, showDeadLetter, from, SESSION_SCAN_LIMIT)
+          : null;
+      if (!result) return;
+      setMessages(prev => reset ? result.messages : [...prev, ...result.messages]);
+      setSessionMsgScannedTotal(prev => (reset ? 0 : prev) + result.scannedCount);
+      setSessionMsgReachedEnd(result.reachedEnd);
+      setSessionMsgCursor(result.lastSequenceNumber);
+    } catch (error) {
+      console.error('Failed to load session messages:', error);
+    } finally {
+      setSessionMsgLoading(false);
+      setLoadingMoreSessionMsgs(false);
+    }
+  };
+
+  const openSession = (sessionId: string) => {
+    setSelectedSession(sessionId);
+    if (isMobile) setMobileView('list');
+    loadSessionMessages(sessionId, true);
+  };
+
+  const backToSessions = () => {
+    setSelectedSession(null);
+    setMessages([]);
+    setSelectedMessage(null);
+  };
+
+  // Toggle the session list on/off; turning it off returns to the flat message list.
+  const toggleSessionView = () => {
+    setSelectedSession(null);
+    setSessionView(v => !v);
+  };
+
+  const handleRefresh = () => {
+    if (sessionView) {
+      if (selectedSession) {
+        loadSessionMessages(selectedSession, true);
+      } else {
+        scanSessions(true);
+      }
+      // Session view bypasses loadMessages/refreshAfterAction, so refresh the
+      // left-panel Active/DLQ counters here too.
+      if (selectedEntity) onUpdateEntityCount?.(selectedEntity);
+    } else {
+      refreshAfterAction();
+    }
+  };
+
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container || loadingMore || !hasMore) return;
@@ -94,14 +232,28 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   }, [loadingMore, hasMore, messages]);
 
   useEffect(() => {
-    if (connection && selectedEntity) {
-      loadMessages();
-    } else {
+    // Any change to the entity, connection, DLQ flag, or session toggle drops back to the
+    // session list (if in session view) or the flat message list, and clears selections.
+    setSelectedSession(null);
+    setSelectedMessage(null);
+    setSelectedMessages(new Set());
+    if (!connection || !selectedEntity) {
       setMessages([]);
-      setSelectedMessage(null);
-      setSelectedMessages(new Set());
+      setSessions([]);
+      return;
     }
-  }, [connection, selectedEntity, showDeadLetter]);
+    if (sessionView && !isSessionEntity) {
+      // Selected a non-session entity while session view was on — fall back to messages.
+      setSessionView(false);
+      return;
+    }
+    if (sessionView) {
+      scanSessions(true);
+    } else {
+      loadMessages();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection, selectedEntity, showDeadLetter, sessionView, isSessionEntity]);
 
   // Keyboard navigation for message list
   useEffect(() => {
@@ -285,19 +437,6 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     }
   };
 
-  const getEntityInfo = () => {
-    if (!selectedEntity) return null;
-    if (selectedEntity.type === 'queue') {
-      return queues.find(q => q.name === selectedEntity.name);
-    } else if (selectedEntity.type === 'subscription' && selectedEntity.topicName) {
-      const topic = topics.find(t => t.name === selectedEntity.topicName);
-      return topic?.subscriptions.find(s => s.name === selectedEntity.name);
-    }
-    return null;
-  };
-
-  const entityInfo = getEntityInfo();
-
   if (!connection || !selectedEntity) {
     return (
       <div className="h-full flex items-center justify-center text-dark-500 p-4">
@@ -341,9 +480,9 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       />
 
       {/* Header - responsive layout */}
-      <div className={`px-3 md:px-4 py-2 md:py-0 md:h-[73px] ${loading ? '' : 'border-b border-dark-700'} flex flex-col md:flex-row md:items-center md:justify-between relative z-10 gap-2 md:gap-0`}>
+      <div className={`px-3 md:px-4 py-2 md:py-0 md:h-[73px] ${busy ? '' : 'border-b border-dark-700'} flex flex-col md:flex-row md:items-center md:justify-between relative z-10 gap-2 md:gap-0`}>
         {/* Loading wave replaces the border line */}
-        {loading && (
+        {busy && (
           <div className="absolute bottom-0 left-0 right-0 h-[1px] overflow-hidden bg-dark-700">
             <div className="loading-wave-line h-full w-full">
               <div className="wave-sweep h-full w-full bg-gradient-to-r from-transparent via-primary-400 to-transparent" />
@@ -379,10 +518,34 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
             </div>
           )}
           {/* Refresh button */}
-          <button onClick={refreshAfterAction} disabled={loading} className="flex items-center gap-1.5 ml-auto md:ml-3 px-2 md:px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white text-sm rounded-lg transition-colors disabled:opacity-50">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          <button onClick={handleRefresh} disabled={busy} className="flex items-center gap-1.5 ml-auto md:ml-3 px-2 md:px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white text-sm rounded-lg transition-colors disabled:opacity-50">
+            <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
             <span className="hidden md:inline">Refresh</span>
           </button>
+          {/* Sessions Toggle - only for session-enabled entities */}
+          {isSessionEntity && (
+            <button
+              onClick={toggleSessionView}
+              className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                sessionView
+                  ? 'bg-primary-500/20 text-primary-400 hover:bg-primary-500/30'
+                  : 'bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white'
+              }`}
+              title={sessionView ? 'Show flat message list' : 'Group messages by session'}
+            >
+              {sessionView ? (
+                <>
+                  <Inbox className="w-4 h-4" />
+                  <span className="hidden md:inline">Messages</span>
+                </>
+              ) : (
+                <>
+                  <Layers className="w-4 h-4" />
+                  <span className="hidden md:inline">Sessions</span>
+                </>
+              )}
+            </button>
+          )}
           {/* DLQ Toggle Button */}
           <button
             onClick={() => setShowDeadLetter(!showDeadLetter)}
@@ -413,13 +576,14 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               <span className="hidden sm:inline">Send</span>
             </button>
           )}
-          {showDeadLetter && selectedMessages.size > 0 && (
+          {/* Mutating actions are hidden in session view, which is browse-only */}
+          {!sessionView && showDeadLetter && selectedMessages.size > 0 && (
             <button onClick={handleReturnSelectedToQueue} disabled={loading} className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 text-sm rounded-lg disabled:opacity-50 whitespace-nowrap flex-shrink-0">
               <RotateCcw className="w-4 h-4" />
               <span className="hidden sm:inline">Return</span> ({selectedMessages.size})
             </button>
           )}
-          {showDeadLetter && selectedMessages.size > 0 ? (
+          {!sessionView && (showDeadLetter && selectedMessages.size > 0 ? (
             <button
               onClick={handleConsumeSelected}
               disabled={loading}
@@ -437,7 +601,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               <Trash2 className="w-4 h-4" />
               <span className="hidden sm:inline">Consume</span>
             </button>
-          )}
+          ))}
 
         </div>
       </div>
@@ -452,74 +616,161 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           }
           border-r border-dark-700 flex flex-col min-h-0
         `}>
-          {messages.length > 0 && (
-            <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between">
-              <span className="text-sm text-dark-400">
-                {selectMode && selectedMessages.size > 0 ? `${selectedMessages.size} selected` : `${messages.length} messages`}
-              </span>
-              {showDeadLetter && (
-                <div className="flex items-center gap-2">
-                  {selectMode && (
-                    <button
-                      onClick={toggleSelectAll}
-                      className="text-xs px-2 py-1 text-primary-400 hover:text-primary-300 hover:bg-dark-600 rounded transition-colors"
-                    >
-                      {selectedMessages.size === messages.length ? 'Deselect All' : 'Select All'}
-                    </button>
-                  )}
-                  <button
-                    onClick={toggleSelectMode}
-                    className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                      selectMode
-                        ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                        : 'bg-dark-600 text-dark-300 hover:bg-dark-500 hover:text-white'
-                    }`}
-                  >
-                    {selectMode ? 'Cancel' : 'Select'}
-                  </button>
+          {sessionView && !selectedSession ? (
+            /* ===== Session list ===== */
+            <>
+              {sessions.length > 0 && (
+                <div className="px-3 h-[46px] border-b border-dark-700 flex items-center">
+                  <span className="text-sm text-dark-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
                 </div>
               )}
-            </div>
-          )}
-          <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto">
-            {loading ? (
-              <div className="flex items-center justify-center py-8 text-dark-500"><p>Loading...</p></div>
-            ) : messages.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-dark-500"><p>No messages found</p></div>
-            ) : (
-              <div className="divide-y divide-dark-700">
-                {messages.map(msg => (
-                  <MessageListItem
-                    key={msg.sequenceNumber}
-                    message={msg}
-                    isSelected={selectedMessage?.sequenceNumber === msg.sequenceNumber}
-                    isChecked={selectedMessages.has(msg.sequenceNumber)}
-                    selectMode={showDeadLetter && selectMode}
-                    onClick={() => {
-                      if (showDeadLetter && selectMode) {
-                        toggleMessageSelection(msg.sequenceNumber);
-                      } else {
-                        setSelectedMessage(msg);
-                        if (isMobile) setMobileView('detail');
-                      }
-                    }}
-                    showDeadLetter={showDeadLetter}
-                    onReturn={() => handleReturnToQueue(msg)}
-                  />
-                ))}
-                {loadingMore && (
-                  <div className="flex items-center justify-center py-4 text-dark-400">
-                    <div className="animate-pulse">Loading more...</div>
+              <div className="flex-1 overflow-auto">
+                {sessionsLoading ? (
+                  <div className="flex items-center justify-center py-8 text-dark-500"><p>Loading sessions...</p></div>
+                ) : sessions.length === 0 ? (
+                  <div className="flex items-center justify-center py-8 text-dark-500"><p>No sessions found</p></div>
+                ) : (
+                  <div className="divide-y divide-dark-700">
+                    {sessions.map(s => (
+                      <button
+                        key={s.sessionId}
+                        onClick={() => openSession(s.sessionId)}
+                        className="w-full text-left p-3 hover:bg-dark-800 transition-colors flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0 flex items-center gap-2">
+                          <Layers className="w-4 h-4 text-primary-400 flex-shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-white truncate">{s.sessionId || '(no session id)'}</div>
+                            {s.lastEnqueuedTime && <div className="text-xs text-dark-500">Last: {new Date(s.lastEnqueuedTime).toLocaleString()}</div>}
+                          </div>
+                        </div>
+                        <span className="text-xs bg-dark-600 px-2 py-1 rounded flex-shrink-0" title={sessionsReachedEnd ? undefined : 'At least this many (scan not finished)'}>
+                          {s.messageCount.toLocaleString()}{!sessionsReachedEnd ? '+' : ''}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
-                {!hasMore && messages.length > 0 && (
-                  <div className="flex items-center justify-center py-4 text-dark-500 text-sm">
-                    No more messages
+                {!sessionsLoading && (sessions.length > 0 || sessionScannedTotal > 0) && (
+                  <div className="p-3 border-t border-dark-700">
+                    <div className="text-xs text-dark-500 text-center mb-2">
+                      Scanned {sessionScannedTotal.toLocaleString()} message{sessionScannedTotal === 1 ? '' : 's'}{sessionsReachedEnd ? ' · reached end of queue' : ''}
+                    </div>
+                    {!sessionsReachedEnd && (
+                      <button
+                        onClick={() => scanSessions(false)}
+                        disabled={loadingMoreSessions}
+                        className="w-full px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-200 text-sm rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {loadingMoreSessions ? 'Scanning…' : 'Load more sessions'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            /* ===== Message list (flat, or a single session's messages) ===== */
+            <>
+              {inSessionMessages ? (
+                <div className="px-3 h-[46px] border-b border-dark-700 flex items-center gap-2">
+                  <button onClick={backToSessions} className="flex items-center gap-1 text-sm text-primary-400 hover:text-primary-300 transition-colors flex-shrink-0">
+                    <ChevronLeft className="w-4 h-4" /> Sessions
+                  </button>
+                  <span className="text-sm text-dark-400 truncate">· {selectedSession || '(no session id)'} ({messages.length.toLocaleString()}{!sessionMsgReachedEnd ? '+' : ''})</span>
+                </div>
+              ) : (
+                messages.length > 0 && (
+                  <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between">
+                    <span className="text-sm text-dark-400">
+                      {selectMode && selectedMessages.size > 0 ? `${selectedMessages.size} selected` : `${messages.length} messages`}
+                    </span>
+                    {showDeadLetter && (
+                      <div className="flex items-center gap-2">
+                        {selectMode && (
+                          <button
+                            onClick={toggleSelectAll}
+                            className="text-xs px-2 py-1 text-primary-400 hover:text-primary-300 hover:bg-dark-600 rounded transition-colors"
+                          >
+                            {selectedMessages.size === messages.length ? 'Deselect All' : 'Select All'}
+                          </button>
+                        )}
+                        <button
+                          onClick={toggleSelectMode}
+                          className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                            selectMode
+                              ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                              : 'bg-dark-600 text-dark-300 hover:bg-dark-500 hover:text-white'
+                          }`}
+                        >
+                          {selectMode ? 'Cancel' : 'Select'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              )}
+              <div ref={scrollContainerRef} onScroll={inSessionMessages ? undefined : handleScroll} className="flex-1 overflow-auto">
+                {(inSessionMessages ? sessionMsgLoading : loading) ? (
+                  <div className="flex items-center justify-center py-8 text-dark-500"><p>Loading...</p></div>
+                ) : (
+                  <>
+                    {messages.length === 0 ? (
+                      <div className="flex items-center justify-center py-8 text-dark-500"><p>{inSessionMessages ? 'No messages for this session in the scanned window' : 'No messages found'}</p></div>
+                    ) : (
+                      <div className="divide-y divide-dark-700">
+                        {messages.map(msg => (
+                          <MessageListItem
+                            key={msg.sequenceNumber}
+                            message={msg}
+                            isSelected={selectedMessage?.sequenceNumber === msg.sequenceNumber}
+                            isChecked={selectedMessages.has(msg.sequenceNumber)}
+                            selectMode={!inSessionMessages && showDeadLetter && selectMode}
+                            onClick={() => {
+                              if (!inSessionMessages && showDeadLetter && selectMode) {
+                                toggleMessageSelection(msg.sequenceNumber);
+                              } else {
+                                setSelectedMessage(msg);
+                                if (isMobile) setMobileView('detail');
+                              }
+                            }}
+                            showDeadLetter={!inSessionMessages && showDeadLetter}
+                            onReturn={() => handleReturnToQueue(msg)}
+                          />
+                        ))}
+                        {!inSessionMessages && loadingMore && (
+                          <div className="flex items-center justify-center py-4 text-dark-400">
+                            <div className="animate-pulse">Loading more...</div>
+                          </div>
+                        )}
+                        {!inSessionMessages && !hasMore && messages.length > 0 && (
+                          <div className="flex items-center justify-center py-4 text-dark-500 text-sm">
+                            No more messages
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {inSessionMessages && (
+                      <div className="p-3 border-t border-dark-700">
+                        <div className="text-xs text-dark-500 text-center mb-2">
+                          Scanned {sessionMsgScannedTotal.toLocaleString()} message{sessionMsgScannedTotal === 1 ? '' : 's'}{sessionMsgReachedEnd ? ' · reached end of queue' : ''}
+                        </div>
+                        {!sessionMsgReachedEnd && (
+                          <button
+                            onClick={() => selectedSession != null && loadSessionMessages(selectedSession, false)}
+                            disabled={loadingMoreSessionMsgs}
+                            className="w-full px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-200 text-sm rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {loadingMoreSessionMsgs ? 'Scanning…' : 'Load more'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Message Detail - full width on mobile when in detail view */}
@@ -615,6 +866,25 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
     </div>
   );
+}
+
+// Combine session summaries from successive peek pages: sum counts per session id and
+// keep the most recent enqueue time. Sorted by count (desc) so the biggest sessions lead.
+function mergeSessions(existing: SessionInfo[], incoming: SessionInfo[]): SessionInfo[] {
+  const map = new Map<string, SessionInfo>();
+  for (const s of existing) map.set(s.sessionId, { ...s });
+  for (const s of incoming) {
+    const cur = map.get(s.sessionId);
+    if (cur) {
+      cur.messageCount += s.messageCount;
+      if (s.lastEnqueuedTime && (!cur.lastEnqueuedTime || s.lastEnqueuedTime > cur.lastEnqueuedTime)) {
+        cur.lastEnqueuedTime = s.lastEnqueuedTime;
+      }
+    } else {
+      map.set(s.sessionId, { ...s });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.messageCount - a.messageCount || a.sessionId.localeCompare(b.sessionId));
 }
 
 interface MessageListItemProps {

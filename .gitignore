@@ -420,6 +420,9 @@ FodyWeavers.xsd
 /data/
 *.db
 *.db-journal
+# SQLite WAL-mode sidecar files
+*.db-shm
+*.db-wal
 .env
 .env.*
 !.env.example

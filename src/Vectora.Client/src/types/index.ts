@@ -11,6 +11,7 @@ export interface QueueInfo {
   activeMessageCount: number;
   deadLetterMessageCount: number;
   isEmulator: boolean;
+  requiresSession: boolean;
 }
 
 export interface TopicInfo {
@@ -23,6 +24,30 @@ export interface SubscriptionInfo {
   name: string;
   activeMessageCount: number;
   deadLetterMessageCount: number;
+  requiresSession: boolean;
+}
+
+export interface SessionInfo {
+  sessionId: string;
+  messageCount: number;
+  lastEnqueuedTime?: string;
+}
+
+// Result of peeking one page of messages and grouping by session id.
+// `lastSequenceNumber + 1` is the cursor to pass as the next fromSequenceNumber.
+export interface SessionScanResult {
+  sessions: SessionInfo[];
+  scannedCount: number;
+  lastSequenceNumber: number | null;
+  reachedEnd: boolean;
+}
+
+// Result of peeking one page of messages and filtering to a single session.
+export interface SessionMessageScanResult {
+  messages: ServiceBusMessage[];
+  scannedCount: number;
+  lastSequenceNumber: number | null;
+  reachedEnd: boolean;
 }
 
 export interface ServiceBusMessage {

@@ -136,7 +136,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
     try {
       if (createMode === 'queue') {
         await createQueue(connection.id, { name });
-        setOptimisticQueues(prev => [...prev, { name, activeMessageCount: 0, deadLetterMessageCount: 0, isEmulator: connection.isEmulator }]);
+        setOptimisticQueues(prev => [...prev, { name, activeMessageCount: 0, deadLetterMessageCount: 0, isEmulator: connection.isEmulator, requiresSession: false }]);
         setPendingQueues(prev => new Set(prev).add(name));
       } else if (createMode === 'topic') {
         await createTopic(connection.id, { name });
@@ -144,7 +144,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
         setPendingTopics(prev => new Set(prev).add(name));
       } else if (createMode === 'subscription') {
         await createSubscription(connection.id, topicForSub, { name });
-        setOptimisticSubscriptions(prev => [...prev, { topicName: topicForSub, sub: { name, activeMessageCount: 0, deadLetterMessageCount: 0 } }]);
+        setOptimisticSubscriptions(prev => [...prev, { topicName: topicForSub, sub: { name, activeMessageCount: 0, deadLetterMessageCount: 0, requiresSession: false } }]);
         setPendingSubscriptions(prev => new Set(prev).add(subscriptionKey(topicForSub, name)));
       }
       setCreateMode(null);

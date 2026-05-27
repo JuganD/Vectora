@@ -7,7 +7,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        // Backend dev profile (Properties/launchSettings.json) listens on 5244.
+        target: 'http://localhost:5244',
         changeOrigin: true,
       },
     },

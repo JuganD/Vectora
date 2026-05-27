@@ -39,33 +39,47 @@ public class ServiceBusService : IServiceBusService
         if (connection.IsEmulator && connection.EmulatorConfigId.HasValue)
         {
             // For emulator: load from config in database
-            var queueNames = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
-            queues.AddRange(queueNames.Select(n => new QueueInfoDto { Name = n, ActiveMessageCount = 0, DeadLetterMessageCount = 0, IsEmulator = true }));
+            var queueConfigs = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
+            queues.AddRange(queueConfigs.Select(q => new QueueInfoDto { Name = q.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, IsEmulator = true, RequiresSession = q.RequiresSession }));
 
             var topicData = await _emulatorConfigService.GetTopicsFromConfigAsync(connection.EmulatorConfigId.Value);
             topics.AddRange(topicData.Select(t => new TopicInfoDto
             {
                 Name = t.TopicName,
-                Subscriptions = t.Subscriptions.Select(s => new SubscriptionInfoDto { Name = s, ActiveMessageCount = 0, DeadLetterMessageCount = 0 }).ToList(),
+                Subscriptions = t.Subscriptions.Select(s => new SubscriptionInfoDto { Name = s.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, RequiresSession = s.RequiresSession }).ToList(),
                 IsEmulator = true
             }));
         }
         else
         {
-            // For real Service Bus: use Administration client
+            // For real Service Bus: use Administration client. RequiresSession lives on the
+            // entity properties (not the runtime properties that carry message counts), so we
+            // pull both and merge by name.
             var adminClient = _clientCache.GetAdminClient(connectionId, connection.ConnectionString);
+
+            var sessionByQueue = new Dictionary<string, bool>();
+            await foreach (var queue in adminClient.GetQueuesAsync(cancellationToken))
+            {
+                sessionByQueue[queue.Name] = queue.RequiresSession;
+            }
 
             await foreach (var queue in adminClient.GetQueuesRuntimePropertiesAsync(cancellationToken))
             {
-                queues.Add(new QueueInfoDto { Name = queue.Name, ActiveMessageCount = queue.ActiveMessageCount, DeadLetterMessageCount = queue.DeadLetterMessageCount, IsEmulator = false });
+                queues.Add(new QueueInfoDto { Name = queue.Name, ActiveMessageCount = queue.ActiveMessageCount, DeadLetterMessageCount = queue.DeadLetterMessageCount, IsEmulator = false, RequiresSession = sessionByQueue.GetValueOrDefault(queue.Name) });
             }
 
             await foreach (var topic in adminClient.GetTopicsAsync(cancellationToken))
             {
+                var sessionBySubscription = new Dictionary<string, bool>();
+                await foreach (var sub in adminClient.GetSubscriptionsAsync(topic.Name, cancellationToken))
+                {
+                    sessionBySubscription[sub.SubscriptionName] = sub.RequiresSession;
+                }
+
                 var subs = new List<SubscriptionInfoDto>();
                 await foreach (var sub in adminClient.GetSubscriptionsRuntimePropertiesAsync(topic.Name, cancellationToken))
                 {
-                    subs.Add(new SubscriptionInfoDto { Name = sub.SubscriptionName, ActiveMessageCount = sub.ActiveMessageCount, DeadLetterMessageCount = sub.DeadLetterMessageCount });
+                    subs.Add(new SubscriptionInfoDto { Name = sub.SubscriptionName, ActiveMessageCount = sub.ActiveMessageCount, DeadLetterMessageCount = sub.DeadLetterMessageCount, RequiresSession = sessionBySubscription.GetValueOrDefault(sub.SubscriptionName) });
                 }
                 topics.Add(new TopicInfoDto { Name = topic.Name, Subscriptions = subs, IsEmulator = false });
             }
@@ -162,6 +176,114 @@ public class ServiceBusService : IServiceBusService
 
             return allMessages.OrderBy(m => m.SequenceNumber).Select(MapToDto).ToList();
         }
+    }
+
+    public async Task<SessionScanResultDto?> ScanSessionsAsync(int connectionId, string entityPath, string? subscriptionName, bool deadLetter, long? fromSequenceNumber, int scanLimit)
+    {
+        var connection = await _connectionRepository.GetByIdAsync(connectionId);
+        if (connection == null) return null;
+
+        var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+        await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, deadLetter);
+
+        // Peek (read-only browse) one page of up to scanLimit messages and group them by
+        // session id. Peek never locks a session, so this is safe against live consumers.
+        var groups = new Dictionary<string, SessionInfoDto>(StringComparer.Ordinal);
+        var scanned = 0;
+        long? lastSequenceNumber = null;
+        long? nextSequenceNumber = fromSequenceNumber;
+        var reachedEnd = false;
+
+        while (scanned < scanLimit)
+        {
+            var batch = nextSequenceNumber.HasValue
+                ? await receiver.PeekMessagesAsync(scanLimit - scanned, nextSequenceNumber.Value)
+                : await receiver.PeekMessagesAsync(scanLimit - scanned);
+
+            // Peek is best-effort; only an empty batch means there is nothing more to page through.
+            if (batch.Count == 0)
+            {
+                reachedEnd = true;
+                break;
+            }
+
+            foreach (var msg in batch)
+            {
+                var sessionId = msg.SessionId ?? string.Empty;
+                if (!groups.TryGetValue(sessionId, out var info))
+                {
+                    info = new SessionInfoDto { SessionId = sessionId };
+                    groups[sessionId] = info;
+                }
+                info.MessageCount++;
+                if (!info.LastEnqueuedTime.HasValue || msg.EnqueuedTime > info.LastEnqueuedTime.Value)
+                {
+                    info.LastEnqueuedTime = msg.EnqueuedTime;
+                }
+            }
+
+            scanned += batch.Count;
+            lastSequenceNumber = batch[batch.Count - 1].SequenceNumber;
+            nextSequenceNumber = lastSequenceNumber + 1;
+        }
+
+        return new SessionScanResultDto
+        {
+            Sessions = groups.Values.OrderBy(s => s.SessionId, StringComparer.Ordinal).ToList(),
+            ScannedCount = scanned,
+            LastSequenceNumber = lastSequenceNumber,
+            ReachedEnd = reachedEnd
+        };
+    }
+
+    public async Task<SessionMessageScanResultDto?> PeekSessionMessagesAsync(int connectionId, string entityPath, string? subscriptionName, string sessionId, bool deadLetter, long? fromSequenceNumber, int scanLimit)
+    {
+        var connection = await _connectionRepository.GetByIdAsync(connectionId);
+        if (connection == null) return null;
+
+        var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+        await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, deadLetter);
+
+        // Peek one page and keep only the messages for the requested session. Filtering a
+        // peeked window (rather than accepting a session receiver) keeps this fully read-only.
+        var matches = new List<ServiceBusMessageDto>();
+        var scanned = 0;
+        long? lastSequenceNumber = null;
+        long? nextSequenceNumber = fromSequenceNumber;
+        var reachedEnd = false;
+
+        while (scanned < scanLimit)
+        {
+            var batch = nextSequenceNumber.HasValue
+                ? await receiver.PeekMessagesAsync(scanLimit - scanned, nextSequenceNumber.Value)
+                : await receiver.PeekMessagesAsync(scanLimit - scanned);
+
+            if (batch.Count == 0)
+            {
+                reachedEnd = true;
+                break;
+            }
+
+            foreach (var msg in batch)
+            {
+                if (string.Equals(msg.SessionId ?? string.Empty, sessionId, StringComparison.Ordinal))
+                {
+                    matches.Add(MapToDto(msg));
+                }
+            }
+
+            scanned += batch.Count;
+            lastSequenceNumber = batch[batch.Count - 1].SequenceNumber;
+            nextSequenceNumber = lastSequenceNumber + 1;
+        }
+
+        return new SessionMessageScanResultDto
+        {
+            Messages = matches,
+            ScannedCount = scanned,
+            LastSequenceNumber = lastSequenceNumber,
+            ReachedEnd = reachedEnd
+        };
     }
 
     public async Task<List<ServiceBusMessageDto>?> ReceiveMessagesAsync(int connectionId, string entityPath, string? subscriptionName, int maxMessages, bool deadLetter)
@@ -362,6 +484,14 @@ public class ServiceBusService : IServiceBusService
             DeadLetterErrorDescription = msg.DeadLetterErrorDescription,
             ApplicationProperties = msg.ApplicationProperties.ToDictionary(k => k.Key, v => v.Value)
         };
+    }
+
+    private static ServiceBusReceiver CreateBrowseReceiver(ServiceBusClient client, string entityPath, string? subscriptionName, bool deadLetter)
+    {
+        var options = new ServiceBusReceiverOptions { SubQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None };
+        return subscriptionName != null
+            ? client.CreateReceiver(entityPath, subscriptionName, options)
+            : client.CreateReceiver(entityPath, options);
     }
 
     private static string GetReceiverPath(string entityPath, string? subscriptionName, bool deadLetter)

@@ -40,18 +40,20 @@ public class EmulatorConfigService : IEmulatorConfigService
         await _db.SaveChangesAsync();
     }
 
-    public async Task<List<string>> GetQueuesFromConfigAsync(int configId)
-    {
-        var config = await LoadConfigAsync(configId);
-        return config?.UserConfig.Namespaces.SelectMany(n => n.Queues.Select(q => q.Name)).ToList() ?? new List<string>();
-    }
-
-    public async Task<List<(string TopicName, List<string> Subscriptions)>> GetTopicsFromConfigAsync(int configId)
+    public async Task<List<(string Name, bool RequiresSession)>> GetQueuesFromConfigAsync(int configId)
     {
         var config = await LoadConfigAsync(configId);
         return config?.UserConfig.Namespaces
-            .SelectMany(n => n.Topics.Select(t => (t.Name, t.Subscriptions.Select(s => s.Name).ToList())))
-            .ToList() ?? new List<(string, List<string>)>();
+            .SelectMany(n => n.Queues.Select(q => (q.Name, q.Properties.RequiresSession)))
+            .ToList() ?? new List<(string, bool)>();
+    }
+
+    public async Task<List<(string TopicName, List<(string Name, bool RequiresSession)> Subscriptions)>> GetTopicsFromConfigAsync(int configId)
+    {
+        var config = await LoadConfigAsync(configId);
+        return config?.UserConfig.Namespaces
+            .SelectMany(n => n.Topics.Select(t => (t.Name, t.Subscriptions.Select(s => (s.Name, s.Properties.RequiresSession)).ToList())))
+            .ToList() ?? new List<(string, List<(string, bool)>)>();
     }
 
     public async Task AddQueueToConfigAsync(int configId, string queueName, EmulatorQueueProperties? properties = null)

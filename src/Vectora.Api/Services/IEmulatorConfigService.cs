@@ -6,8 +6,8 @@ public interface IEmulatorConfigService
 {
     Task<EmulatorConfig?> LoadConfigAsync(int configId);
     Task SaveConfigAsync(int configId, EmulatorConfig config);
-    Task<List<string>> GetQueuesFromConfigAsync(int configId);
-    Task<List<(string TopicName, List<string> Subscriptions)>> GetTopicsFromConfigAsync(int configId);
+    Task<List<(string Name, bool RequiresSession)>> GetQueuesFromConfigAsync(int configId);
+    Task<List<(string TopicName, List<(string Name, bool RequiresSession)> Subscriptions)>> GetTopicsFromConfigAsync(int configId);
     Task AddQueueToConfigAsync(int configId, string queueName, EmulatorQueueProperties? properties = null);
     Task AddTopicToConfigAsync(int configId, string topicName, EmulatorTopicProperties? properties = null);
     Task AddSubscriptionToConfigAsync(int configId, string topicName, string subscriptionName, EmulatorSubscriptionProperties? properties = null);
