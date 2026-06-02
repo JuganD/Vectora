@@ -5,6 +5,10 @@ import type { ServiceBusMessage } from '../types';
 
 export type ViewMode = 'body' | 'properties';
 
+// Dead-letter details arrive as application properties too; we surface them in their own
+// section, so filter them out of the generic Application Properties list to avoid duplication.
+const DLQ_PROPERTY_KEYS = new Set(['DeadLetterReason', 'DeadLetterErrorDescription', 'DeadLetterSource']);
+
 interface MessageViewerProps {
   message: ServiceBusMessage;
   onUseAsTemplate?: (message: ServiceBusMessage) => void;
@@ -38,6 +42,24 @@ export default function MessageViewer({ message, onUseAsTemplate, viewMode: cont
       return { formattedBody: message.body, language: 'plaintext' };
     }
   }, [message.body]);
+
+  // Byte length of the body (not character count) so multi-byte payloads report accurately.
+  const bodySize = useMemo(() => formatBytes(new TextEncoder().encode(message.body).length), [message.body]);
+
+  // Absolute expiry (EnqueuedTime + TTL). Hidden for scheduled messages (not enqueued yet)
+  // and when the SDK reports ~year 9999 (DateTimeOffset.MaxValue = effectively never expires).
+  const expiresAt = useMemo(() => {
+    if (message.state === 'Scheduled' || !message.expiresAt) return null;
+    const d = new Date(message.expiresAt);
+    if (isNaN(d.getTime()) || d.getFullYear() >= 9999) return null;
+    return d;
+  }, [message.expiresAt, message.state]);
+
+  // Application properties minus the dead-letter keys (shown in the Dead Letter Info section).
+  const appProperties = useMemo(
+    () => Object.entries(message.applicationProperties ?? {}).filter(([key]) => !DLQ_PROPERTY_KEYS.has(key)),
+    [message.applicationProperties]
+  );
 
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -87,27 +109,37 @@ export default function MessageViewer({ message, onUseAsTemplate, viewMode: cont
             <PropertySection title="System Properties">
               <PropertyRow label="Message ID" value={message.messageId} />
               <PropertyRow label="Sequence Number" value={message.sequenceNumber.toString()} />
-              <PropertyRow label="Enqueued Time" value={new Date(message.enqueuedTime).toLocaleString()} />
+              <PropertyRow label="State" value={message.state} />
+              {message.scheduledEnqueueTime && (
+                <PropertyRow label="Schedule" value={new Date(message.scheduledEnqueueTime).toLocaleString()} />
+              )}
+              {message.state !== 'Scheduled' && (
+                <PropertyRow label="Enqueued Time" value={new Date(message.enqueuedTime).toLocaleString()} />
+              )}
               <PropertyRow label="Content Type" value={message.contentType} />
+              <PropertyRow label="Body Size" value={bodySize} />
               <PropertyRow label="Subject" value={message.subject} />
               <PropertyRow label="Correlation ID" value={message.correlationId} />
               <PropertyRow label="Session ID" value={message.sessionId} />
               <PropertyRow label="Reply To" value={message.replyTo} />
+              <PropertyRow label="Reply To Session ID" value={message.replyToSessionId} />
               <PropertyRow label="To" value={message.to} />
               <PropertyRow label="Time To Live" value={message.timeToLive} />
+              {expiresAt && <PropertyRow label="Expires At" value={expiresAt.toLocaleString()} />}
               <PropertyRow label="Delivery Count" value={message.deliveryCount.toString()} />
             </PropertySection>
 
-            {message.deadLetterReason && (
+            {(message.deadLetterReason || message.deadLetterErrorDescription || message.deadLetterSource) && (
               <PropertySection title="Dead Letter Info">
                 <PropertyRow label="Reason" value={message.deadLetterReason} />
-                <PropertyRow label="Error Description" value={message.deadLetterErrorDescription} />
+                <PropertyRow label="Description" value={message.deadLetterErrorDescription} />
+                <PropertyRow label="Source" value={message.deadLetterSource} />
               </PropertySection>
             )}
 
-            {message.applicationProperties && Object.keys(message.applicationProperties).length > 0 && (
+            {appProperties.length > 0 && (
               <PropertySection title="Application Properties">
-                {Object.entries(message.applicationProperties).map(([key, value]) => (
+                {appProperties.map(([key, value]) => (
                   <PropertyRow key={key} label={key} value={String(value)} />
                 ))}
               </PropertySection>
@@ -136,6 +168,12 @@ export default function MessageViewer({ message, onUseAsTemplate, viewMode: cont
   );
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function PropertySection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
@@ -148,8 +186,8 @@ function PropertySection({ title, children }: { title: string; children: React.R
 function PropertyRow({ label, value }: { label: string; value?: string }) {
   if (!value) return null;
   return (
-    <div className="grid grid-cols-[minmax(120px,auto)_1fr] gap-3 px-3 py-2">
-      <span className="text-sm text-dark-400 break-all">{label}</span>
+    <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 px-3 py-2">
+      <span className="text-sm text-dark-400 break-words">{label}</span>
       <span className="text-sm text-white break-all">{value}</span>
     </div>
   );

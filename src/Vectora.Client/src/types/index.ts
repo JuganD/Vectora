@@ -63,10 +63,13 @@ export interface ServiceBusMessage {
   sequenceNumber: number;
   enqueuedTime: string;
   scheduledEnqueueTime?: string;
+  state: string; // 'Active' | 'Scheduled' | 'Deferred'
   timeToLive: string;
+  expiresAt: string;
   deliveryCount: number;
   deadLetterReason?: string;
   deadLetterErrorDescription?: string;
+  deadLetterSource?: string;
   applicationProperties?: Record<string, unknown>;
 }
 

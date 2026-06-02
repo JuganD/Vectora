@@ -332,7 +332,7 @@ public class ServiceBusService : IServiceBusService
         }
     }
 
-    public async Task<int?> ReceiveDeadLetterMessagesBySequenceAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers)
+    public async Task<int?> ReceiveMessagesBySequenceAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers, bool deadLetter)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
@@ -344,18 +344,12 @@ public class ServiceBusService : IServiceBusService
         }
 
         var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
-        ServiceBusReceiver dlqReceiver;
+        var receiverOptions = new ServiceBusReceiverOptions { SubQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None, PrefetchCount = 0 };
+        ServiceBusReceiver receiver = subscriptionName != null
+            ? client.CreateReceiver(entityPath, subscriptionName, receiverOptions)
+            : client.CreateReceiver(entityPath, receiverOptions);
 
-        if (subscriptionName != null)
-        {
-            dlqReceiver = client.CreateReceiver(entityPath, subscriptionName, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, PrefetchCount = 0 });
-        }
-        else
-        {
-            dlqReceiver = client.CreateReceiver(entityPath, new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter, PrefetchCount = 0 });
-        }
-
-        await using (dlqReceiver)
+        await using (receiver)
         {
             const int batchSize = 256;
             var completed = 0;
@@ -364,7 +358,7 @@ public class ServiceBusService : IServiceBusService
 
             while (sequenceSet.Count > 0 && DateTime.UtcNow < deadline)
             {
-                var received = await dlqReceiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(1));
+                var received = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(1));
                 if (received.Count == 0)
                 {
                     break;
@@ -388,14 +382,47 @@ public class ServiceBusService : IServiceBusService
 
                 // Complete and abandon in parallel for speed
                 var tasks = new List<Task>();
-                tasks.AddRange(toComplete.Select(m => dlqReceiver.CompleteMessageAsync(m)));
-                tasks.AddRange(toAbandon.Select(m => dlqReceiver.AbandonMessageAsync(m)));
+                tasks.AddRange(toComplete.Select(m => receiver.CompleteMessageAsync(m)));
+                tasks.AddRange(toAbandon.Select(m => receiver.AbandonMessageAsync(m)));
                 await Task.WhenAll(tasks);
 
                 completed += toComplete.Count;
             }
             return completed;
         }
+    }
+
+    public async Task<int?> CancelScheduledMessagesAsync(int connectionId, string entityPath, IEnumerable<long> sequenceNumbers)
+    {
+        var connection = await _connectionRepository.GetByIdAsync(connectionId);
+        if (connection == null) return null;
+
+        var sequences = sequenceNumbers.Distinct().ToList();
+        if (sequences.Count == 0)
+        {
+            return 0;
+        }
+
+        var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+        await using var sender = client.CreateSender(entityPath);
+
+        // Cancelling a scheduled message removes it before its enqueue time. Each cancel is
+        // independent; tolerate individual failures (e.g. a message that already fired) so one
+        // bad sequence number doesn't abort the whole batch.
+        var cancelled = 0;
+        foreach (var sequenceNumber in sequences)
+        {
+            try
+            {
+                await sender.CancelScheduledMessageAsync(sequenceNumber);
+                cancelled++;
+            }
+            catch (ServiceBusException)
+            {
+                // Message no longer schedulable (already enqueued or cancelled) — skip it.
+            }
+        }
+        return cancelled;
     }
 
     public async Task<bool> SendMessageAsync(int connectionId, string entityPath, SendMessageDto dto)
@@ -477,11 +504,17 @@ public class ServiceBusService : IServiceBusService
             To = msg.To,
             SequenceNumber = msg.SequenceNumber,
             EnqueuedTime = msg.EnqueuedTime,
-            ScheduledEnqueueTime = msg.ScheduledEnqueueTime,
+            // Non-scheduled messages report a sentinel rather than null — real Service Bus uses
+            // DateTimeOffset.MinValue (year 0001), the emulator uses the Unix epoch (1970). Treat
+            // anything at or before the epoch as "not scheduled" so the UI shows no bogus schedule.
+            ScheduledEnqueueTime = msg.ScheduledEnqueueTime > DateTimeOffset.UnixEpoch ? msg.ScheduledEnqueueTime : null,
+            State = msg.State.ToString(),
             TimeToLive = msg.TimeToLive,
+            ExpiresAt = msg.ExpiresAt,
             DeliveryCount = msg.DeliveryCount,
             DeadLetterReason = msg.DeadLetterReason,
             DeadLetterErrorDescription = msg.DeadLetterErrorDescription,
+            DeadLetterSource = msg.DeadLetterSource,
             ApplicationProperties = msg.ApplicationProperties.ToDictionary(k => k.Key, v => v.Value)
         };
     }

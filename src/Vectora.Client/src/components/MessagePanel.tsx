@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers } from 'lucide-react';
+import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo } from '../types';
-import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
+import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 
@@ -361,7 +361,32 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     }
   };
 
+  // Delete the selected active-queue messages. Scheduled messages can't be received, so they
+  // are cancelled by their scheduled sequence number; everything else is received + completed.
+  const handleDeleteSelected = async () => {
+    if (!connection || !selectedEntity || selectedMessages.size === 0) return;
+    setLoading(true);
+    try {
+      const selected = messages.filter(m => selectedMessages.has(m.sequenceNumber));
+      const scheduled = selected.filter(m => m.state === 'Scheduled').map(m => m.sequenceNumber);
+      const active = selected.filter(m => m.state !== 'Scheduled').map(m => m.sequenceNumber);
 
+      if (selectedEntity.type === 'queue') {
+        if (scheduled.length > 0) await cancelQueueScheduledBatch(connection.id, selectedEntity.name, scheduled);
+        if (active.length > 0) await deleteQueueMessagesBatch(connection.id, selectedEntity.name, active);
+      } else if (selectedEntity.type === 'subscription' && selectedEntity.topicName) {
+        // Subscriptions never hold scheduled messages (scheduling targets the topic).
+        if (active.length > 0) await deleteSubscriptionMessagesBatch(connection.id, selectedEntity.topicName, selectedEntity.name, active);
+      }
+      setSelectedMessages(new Set());
+      setSelectMode(false);
+      await refreshAfterAction();
+    } catch (error) {
+      console.error('Failed to delete selected messages:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const toggleMessageSelection = (seqNum: number) => {
     setSelectedMessages(prev => {
@@ -583,14 +608,16 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               <span className="hidden sm:inline">Return</span> ({selectedMessages.size})
             </button>
           )}
-          {!sessionView && (showDeadLetter && selectedMessages.size > 0 ? (
+          {!sessionView && (selectedMessages.size > 0 ? (
+            // Selected messages: DLQ "Consumes" them; the active queue "Deletes" them
+            // (cancelling scheduled ones, receiving + completing the rest).
             <button
-              onClick={handleConsumeSelected}
+              onClick={showDeadLetter ? handleConsumeSelected : handleDeleteSelected}
               disabled={loading}
               className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm rounded-lg disabled:opacity-50 whitespace-nowrap flex-shrink-0"
             >
               <Trash2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Consume</span> ({selectedMessages.size})
+              <span className="hidden sm:inline">{showDeadLetter ? 'Consume' : 'Delete'}</span> ({selectedMessages.size})
             </button>
           ) : (
             <button
@@ -685,28 +712,26 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                     <span className="text-sm text-dark-400">
                       {selectMode && selectedMessages.size > 0 ? `${selectedMessages.size} selected` : `${messages.length} messages`}
                     </span>
-                    {showDeadLetter && (
-                      <div className="flex items-center gap-2">
-                        {selectMode && (
-                          <button
-                            onClick={toggleSelectAll}
-                            className="text-xs px-2 py-1 text-primary-400 hover:text-primary-300 hover:bg-dark-600 rounded transition-colors"
-                          >
-                            {selectedMessages.size === messages.length ? 'Deselect All' : 'Select All'}
-                          </button>
-                        )}
+                    <div className="flex items-center gap-2">
+                      {selectMode && (
                         <button
-                          onClick={toggleSelectMode}
-                          className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                            selectMode
-                              ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                              : 'bg-dark-600 text-dark-300 hover:bg-dark-500 hover:text-white'
-                          }`}
+                          onClick={toggleSelectAll}
+                          className="text-xs px-2 py-1 text-primary-400 hover:text-primary-300 hover:bg-dark-600 rounded transition-colors"
                         >
-                          {selectMode ? 'Cancel' : 'Select'}
+                          {selectedMessages.size === messages.length ? 'Deselect All' : 'Select All'}
                         </button>
-                      </div>
-                    )}
+                      )}
+                      <button
+                        onClick={toggleSelectMode}
+                        className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                          selectMode
+                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                            : 'bg-dark-600 text-dark-300 hover:bg-dark-500 hover:text-white'
+                        }`}
+                      >
+                        {selectMode ? 'Cancel' : 'Select'}
+                      </button>
+                    </div>
                   </div>
                 )
               )}
@@ -725,9 +750,9 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                             message={msg}
                             isSelected={selectedMessage?.sequenceNumber === msg.sequenceNumber}
                             isChecked={selectedMessages.has(msg.sequenceNumber)}
-                            selectMode={!inSessionMessages && showDeadLetter && selectMode}
+                            selectMode={!inSessionMessages && selectMode}
                             onClick={() => {
-                              if (!inSessionMessages && showDeadLetter && selectMode) {
+                              if (!inSessionMessages && selectMode) {
                                 toggleMessageSelection(msg.sequenceNumber);
                               } else {
                                 setSelectedMessage(msg);
@@ -899,12 +924,20 @@ interface MessageListItemProps {
 
 function MessageListItem({ message, isSelected, isChecked, selectMode, onClick, showDeadLetter, onReturn }: MessageListItemProps) {
   const bodyPreview = message.body.length > 100 ? message.body.substring(0, 100) + '...' : message.body;
+  const isScheduled = message.state === 'Scheduled';
 
   const handleReturnClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     e.stopPropagation();
     onReturn();
   };
+
+  const scheduledBadge = isScheduled ? (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+      <Clock className="w-3 h-3" />
+      {message.scheduledEnqueueTime ? new Date(message.scheduledEnqueueTime).toLocaleString() : 'Scheduled'}
+    </span>
+  ) : null;
 
   // In select mode: show large checkbox, glow when checked
   if (selectMode) {
@@ -931,9 +964,12 @@ function MessageListItem({ message, isSelected, isChecked, selectMode, onClick, 
         </div>
         {/* Message content */}
         <div className="flex-1 p-3 min-w-0">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-dark-400">#{message.sequenceNumber}</span>
-            <span className="text-xs text-dark-500">{new Date(message.enqueuedTime).toLocaleString()}</span>
+          <div className="flex items-center justify-between mb-1 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xs text-dark-400">#{message.sequenceNumber}</span>
+              {scheduledBadge}
+            </div>
+            {!isScheduled && <span className="text-xs text-dark-500 flex-shrink-0">{new Date(message.enqueuedTime).toLocaleString()}</span>}
           </div>
           {message.subject && <div className="text-sm font-medium text-white mb-1">{message.subject}</div>}
           <div className="text-sm text-dark-300 truncate">{bodyPreview}</div>
@@ -946,10 +982,13 @@ function MessageListItem({ message, isSelected, isChecked, selectMode, onClick, 
   // Normal mode: no checkbox
   return (
     <div data-message-item className={`p-3 cursor-pointer transition-colors ${isSelected ? 'bg-primary-500/20' : 'hover:bg-dark-800'}`} onClick={onClick}>
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-dark-400">#{message.sequenceNumber}</span>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-dark-500">{new Date(message.enqueuedTime).toLocaleString()}</span>
+      <div className="flex items-center justify-between mb-1 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs text-dark-400">#{message.sequenceNumber}</span>
+          {scheduledBadge}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {!isScheduled && <span className="text-xs text-dark-500">{new Date(message.enqueuedTime).toLocaleString()}</span>}
           {showDeadLetter && (
             <button
               type="button"

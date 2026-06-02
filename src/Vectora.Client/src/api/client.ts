@@ -171,6 +171,16 @@ export const receiveQueueDeadLetterBatch = (connectionId: number, queueName: str
 export const receiveSubscriptionDeadLetterBatch = (connectionId: number, topicName: string, subscriptionName: string, sequenceNumbers: number[]) =>
   fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/deadletter/receive/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
 
+// Delete selected active messages (receive + complete by sequence number)
+export const deleteQueueMessagesBatch = (connectionId: number, queueName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages/delete/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+export const deleteSubscriptionMessagesBatch = (connectionId: number, topicName: string, subscriptionName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages/delete/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+
+// Cancel selected scheduled messages (by scheduled sequence number)
+export const cancelQueueScheduledBatch = (connectionId: number, queueName: string, sequenceNumbers: number[]) =>
+  fetchApi<{ processed: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/scheduled/cancel/batch`, { method: 'POST', body: JSON.stringify(sequenceNumbers) });
+
 // Settings
 export interface Settings {
   batchOperationTimeoutSeconds: number;

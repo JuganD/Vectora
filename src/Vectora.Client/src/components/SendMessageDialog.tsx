@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen, Search } from 'lucide-react';
+import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen, Search, Clock } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage, MessageTemplate } from '../types';
 import { sendToQueue, sendToTopic, getMessageTemplates, saveMessageTemplate, deleteMessageTemplate } from '../api/client';
+import DateTimePicker from './DateTimePicker';
 
 // Hook to detect mobile viewport
 function useIsMobile() {
@@ -80,6 +81,9 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   const [properties, setProperties] = useState<{ key: string; value: string }[]>(initial.properties);
   const [sendMultiple, setSendMultiple] = useState(initial.sendMultiple ?? false);
   const [sendCount, setSendCount] = useState(initial.sendCount ?? '5');
+  // Scheduling: the message is only scheduled when the checkbox is on AND a future time is picked.
+  const [scheduleForLater, setScheduleForLater] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -242,6 +246,11 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     }
   };
 
+  // A scheduled send requires both the toggle and a future time; otherwise sending is blocked.
+  const scheduleMissingTime = scheduleForLater && !scheduledTime;
+  const schedulePastTime = scheduleForLater && !!scheduledTime && scheduledTime.getTime() <= Date.now();
+  const scheduleBlocked = scheduleMissingTime || schedulePastTime;
+
   const handleSend = async () => {
     if (!body.trim()) {
       setError('Message body is required');
@@ -250,6 +259,14 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     const count = sendMultiple ? (parseInt(sendCount) || 1) : 1;
     if (count < 1) {
       setError('Count must be at least 1');
+      return;
+    }
+    if (scheduleMissingTime) {
+      setError('Pick a date and time to schedule the message');
+      return;
+    }
+    if (schedulePastTime) {
+      setError('Scheduled time must be in the future');
       return;
     }
     setError('');
@@ -262,6 +279,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       messageId: messageId || undefined,
       correlationId: correlationId || undefined,
       sessionId: sessionId || undefined,
+      scheduledEnqueueTime: scheduleForLater && scheduledTime ? scheduledTime.toISOString() : undefined,
       applicationProperties: properties.length > 0
         ? Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, p.value]))
         : undefined,
@@ -332,11 +350,17 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
             {/* Send button */}
             <button
               onClick={handleSend}
-              disabled={loading || !body.trim()}
+              disabled={loading || !body.trim() || scheduleBlocked}
               className="px-4 md:px-6 py-1.5 md:py-2 bg-primary-500 hover:bg-primary-400 text-white rounded-lg flex items-center gap-2 text-sm font-medium disabled:opacity-50 transition-colors"
             >
-              <Send className="w-4 h-4" />
-              <span>{loading ? 'Sending...' : sendMultiple && parseInt(sendCount) > 1 ? `Send (${sendCount}×)` : 'Send'}</span>
+              {scheduleForLater ? <Clock className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+              <span>
+                {loading
+                  ? (scheduleForLater ? 'Scheduling...' : 'Sending...')
+                  : scheduleForLater
+                    ? (sendMultiple && parseInt(sendCount) > 1 ? `Schedule (${sendCount}×)` : 'Schedule')
+                    : (sendMultiple && parseInt(sendCount) > 1 ? `Send (${sendCount}×)` : 'Send')}
+              </span>
             </button>
           </div>
         </div>
@@ -480,6 +504,38 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
                       placeholder="Count"
                       className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
+                  </div>
+                )}
+              </div>
+
+              {/* Schedule for later */}
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-dark-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={scheduleForLater}
+                    onChange={e => {
+                      setScheduleForLater(e.target.checked);
+                      if (!e.target.checked) setScheduledTime(null);
+                    }}
+                    className="rounded border-dark-500"
+                  />
+                  <Clock className="w-3.5 h-3.5 text-primary-400" />
+                  Schedule for later
+                </label>
+                {scheduleForLater && (
+                  <div className="mt-2 space-y-1.5">
+                    <DateTimePicker
+                      value={scheduledTime}
+                      onChange={setScheduledTime}
+                      minDate={new Date()}
+                    />
+                    {schedulePastTime && (
+                      <p className="text-xs text-red-400">Scheduled time must be in the future.</p>
+                    )}
+                    {scheduleMissingTime && (
+                      <p className="text-xs text-dark-500">Pick a date and time — the message will be enqueued then.</p>
+                    )}
                   </div>
                 )}
               </div>
