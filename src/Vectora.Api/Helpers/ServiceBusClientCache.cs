@@ -9,6 +9,7 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
     private readonly ConcurrentDictionary<int, ServiceBusClient> _clients = new();
     private readonly ConcurrentDictionary<int, ServiceBusAdministrationClient> _adminClients = new();
     private readonly ConcurrentDictionary<int, string> _connectionStrings = new();
+    private readonly ConcurrentDictionary<int, bool> _emulatorAdminAvailable = new();
 
     public ServiceBusClient GetClient(int connectionId, string connectionString)
     {
@@ -42,10 +43,35 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
         });
     }
 
+    public ServiceBusAdministrationClient GetEmulatorAdminClient(int connectionId, string connectionString, string adminConnectionString)
+    {
+        // Identity is the original (data-plane) connection string — same as GetClient — so the
+        // two never invalidate each other. The admin client itself is built from the
+        // management-port variant.
+        if (_connectionStrings.TryGetValue(connectionId, out var existingConnectionString)
+            && existingConnectionString != connectionString)
+        {
+            InvalidateConnection(connectionId);
+        }
+
+        return _adminClients.GetOrAdd(connectionId, _ =>
+        {
+            _connectionStrings[connectionId] = connectionString;
+            return new ServiceBusAdministrationClient(adminConnectionString);
+        });
+    }
+
+    public bool? GetEmulatorAdminAvailability(int connectionId)
+        => _emulatorAdminAvailable.TryGetValue(connectionId, out var available) ? available : null;
+
+    public void SetEmulatorAdminAvailability(int connectionId, bool available)
+        => _emulatorAdminAvailable[connectionId] = available;
+
     public void InvalidateConnection(int connectionId)
     {
         _connectionStrings.TryRemove(connectionId, out _);
         _adminClients.TryRemove(connectionId, out _);
+        _emulatorAdminAvailable.TryRemove(connectionId, out _);
         
         if (_clients.TryRemove(connectionId, out var client))
         {
@@ -80,6 +106,7 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
         _clients.Clear();
         _adminClients.Clear();
         _connectionStrings.Clear();
+        _emulatorAdminAvailable.Clear();
     }
 }
 

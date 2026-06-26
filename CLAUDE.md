@@ -73,12 +73,13 @@ Entities (each with a unique index on name/key):
 
 ### Emulator vs real Service Bus
 
-`ServiceBusService` branches on `connection.IsEmulator`:
+`ServiceBusService` picks an entity-management path per call via `GetManagementClientAsync`:
 
 - **Real Service Bus**: uses `ServiceBusAdministrationClient` for entity CRUD and runtime info.
-- **Emulator**: the Azure Service Bus Emulator does not expose the management API, so entity CRUD instead reads/mutates the JSON config stored in `EmulatorConfigFile` via `EmulatorConfigService`. Runtime message counts are reported as 0 for emulator entities; messaging operations (send/peek/receive/DLQ) still go through the regular `ServiceBusClient`.
+- **Emulator with a reachable management API**: newer Azure Service Bus Emulator builds (with SDK ≥ 7.20) expose the admin API over a separate HTTP port (5300 by default, configurable via the `EmulatorAdminPort` setting / `EMULATOR_HTTP_PORT` on the emulator). When a TCP probe to that port succeeds, the emulator is driven through the same `ServiceBusAdministrationClient` code path as real Service Bus — full CRUD and real message counts. The admin client is built from a connection string whose `Endpoint` is rewritten to the admin port (`EmulatorAdmin.BuildAdminConnectionString`); the data-plane `ServiceBusClient` keeps the original string. Probe results are cached on `ServiceBusClientCache` and re-checked on each explicit refresh (`refreshCache=true`).
+- **Emulator with no reachable management API (fallback)**: entity CRUD reads/mutates the JSON config stored in `EmulatorConfigFile` via `EmulatorConfigService`, and runtime message counts are reported as 0; messaging operations (send/peek/receive/DLQ) always go through the regular `ServiceBusClient` regardless.
 
-When adding new entity-management features, you almost always need to implement **both** branches.
+`GetEntitiesAsync` returns a `SupportsManagement` flag (true for real Service Bus, and for emulators when admin is reachable). The frontend threads it through as `canManage` to gate the create/edit/delete UI and runtime-count refreshes. When adding new entity-management features, route admin access through `GetManagementClientAsync` and keep the `EmulatorConfigService` fallback for the no-admin case.
 
 ### Endpoint layout
 
@@ -111,6 +112,7 @@ Tailwind is configured via `tailwind.config.js` + `postcss.config.js`; Monaco is
 | `VECTORA_PASSWORD` | Optional login password; also seeds the JWT signing key |
 | `DataPath` | Directory for `vectora.db` (default `./data`, `/data` in container) |
 | `EmulatorConfigPath` | Set in the container image but the current code reads emulator configs from the DB, not the filesystem |
+| `EmulatorAdminPort` | Port the Service Bus emulator serves the management API on (default `5300`). Used to build the emulator admin connection string and to probe admin availability |
 | `ASPNETCORE_URLS` | Standard ASP.NET hosting binding |
 | `VITE_API_URL` | Frontend base URL for API calls (set in `.env.local` for split dev) |
 

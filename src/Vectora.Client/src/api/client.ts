@@ -89,7 +89,7 @@ export const deleteEmulatorConfig = (id: number) =>
 
 // Service Bus entities
 export const getEntities = (connectionId: number, refreshCache = false, signal?: AbortSignal) =>
-  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(
+  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[]; supportsManagement: boolean }>(
     `/connections/${connectionId}/servicebus/entities${refreshCache ? '?refreshCache=true' : ''}`,
     { signal }
   );

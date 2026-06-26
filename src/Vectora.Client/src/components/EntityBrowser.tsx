@@ -14,6 +14,9 @@ interface EntityBrowserProps {
   onSelectEntity: (entity: SelectedEntity | null) => void;
   onRefresh: () => void;
   loading: boolean;
+  // True when entity management (create/edit/delete) is available: real Service Bus, or an
+  // emulator whose admin port is reachable. When false, the browser is read-only.
+  canManage: boolean;
 }
 
 type CreateMode = null | 'queue' | 'topic' | 'subscription';
@@ -31,7 +34,7 @@ interface EditTarget {
   topicName?: string;
 }
 
-export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading }: EntityBrowserProps) {
+export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, canManage }: EntityBrowserProps) {
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [createMode, setCreateMode] = useState<CreateMode>(null);
@@ -295,7 +298,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             <div className="mb-4">
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-dark-400 uppercase tracking-wider">Queues</span>
-                {!connection?.isEmulator && (
+                {canManage && (
                   <button onClick={() => setCreateMode('queue')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Queue">
                     <Plus className="w-3.5 h-3.5" />
                   </button>
@@ -311,8 +314,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   isSelected={selectedEntity?.type === 'queue' && selectedEntity.name === queue.name}
                   onClick={() => onSelectEntity({ type: 'queue', name: queue.name })}
                   onDelete={() => openDeleteDialog('queue', queue.name)}
-                  onEdit={queue.isEmulator ? undefined : () => openEditDialog('queue', queue.name)}
-                  isEmulator={queue.isEmulator}
+                  onEdit={canManage ? () => openEditDialog('queue', queue.name) : undefined}
+                  isEmulator={!canManage}
                   pending={pendingQueues.has(queue.name)}
                 />
               ))}
@@ -325,7 +328,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             <div>
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-dark-400 uppercase tracking-wider">Topics</span>
-                {!connection?.isEmulator && (
+                {canManage && (
                   <button onClick={() => setCreateMode('topic')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Topic">
                     <Plus className="w-3.5 h-3.5" />
                   </button>
@@ -343,9 +346,9 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                       toggleTopic(topic.name);
                     }}
                     onDelete={() => openDeleteDialog('topic', topic.name)}
-                    onEdit={topic.isEmulator ? undefined : () => openEditDialog('topic', topic.name)}
+                    onEdit={canManage ? () => openEditDialog('topic', topic.name) : undefined}
                     onAddSubscription={() => { setCreateMode('subscription'); setCreateTopicName(topic.name); }}
-                    isEmulator={topic.isEmulator}
+                    isEmulator={!canManage}
                     pending={pendingTopics.has(topic.name)}
                   />
                   {expandedTopics.has(topic.name) && (
@@ -360,8 +363,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                           isSelected={selectedEntity?.type === 'subscription' && selectedEntity.name === sub.name && selectedEntity.topicName === topic.name}
                           onClick={() => onSelectEntity({ type: 'subscription', name: sub.name, topicName: topic.name })}
                           onDelete={() => openDeleteDialog('subscription', sub.name, topic.name)}
-                          onEdit={topic.isEmulator ? undefined : () => openEditDialog('subscription', sub.name, topic.name)}
-                          isEmulator={topic.isEmulator}
+                          onEdit={canManage ? () => openEditDialog('subscription', sub.name, topic.name) : undefined}
+                          isEmulator={!canManage}
                           pending={pendingSubscriptions.has(subscriptionKey(topic.name, sub.name))}
                         />
                       ))}
