@@ -22,20 +22,13 @@ public class ServiceBusService : IServiceBusService
         _clientCache = clientCache;
         _entityCache = entityCache;
         _settingsService = settingsService;
-        // The emulator serves the management API on its own HTTP port (5300 by default).
-        // Configurable to match a custom EMULATOR_HTTP_PORT on the emulator side.
         _emulatorAdminPort = configuration.GetValue<int?>("EmulatorAdminPort") ?? EmulatorAdmin.DefaultAdminPort;
     }
 
-    // Probe timeout for the emulator management port. Short because it targets a local/container
-    // endpoint and runs on the entity-load path.
     private static readonly TimeSpan EmulatorAdminProbeTimeout = TimeSpan.FromSeconds(2);
 
-    /// <summary>
-    /// Decides whether an emulator connection's management API is reachable. The result is cached
-    /// on the (singleton) client cache; pass <paramref name="forceProbe"/> to re-probe (e.g. on an
-    /// explicit refresh) so an emulator that started after the first check is picked up.
-    /// </summary>
+    // Pass forceProbe to re-probe (e.g. on an explicit refresh) so an emulator started after the
+    // first check is picked up; otherwise the cached result on the client cache is reused.
     private async Task<bool> IsEmulatorAdminAvailableAsync(ServiceBusConnection connection, bool forceProbe, CancellationToken cancellationToken)
     {
         if (!connection.IsEmulator) return false;
@@ -53,11 +46,8 @@ public class ServiceBusService : IServiceBusService
         return available;
     }
 
-    /// <summary>
-    /// Returns the administration client to use for entity management, or null when the connection
-    /// is an emulator whose management port is unreachable (the caller then falls back to the stored
-    /// emulator config). Real Service Bus connections always return a client.
-    /// </summary>
+    // Returns the admin client for entity management, or null for an emulator whose management
+    // port is unreachable (the caller then falls back to the stored emulator config).
     private async Task<ServiceBusAdministrationClient?> GetManagementClientAsync(ServiceBusConnection connection, bool forceProbe = false, CancellationToken cancellationToken = default)
     {
         if (!connection.IsEmulator)
@@ -81,8 +71,6 @@ public class ServiceBusService : IServiceBusService
 
         if (!refreshCache && _entityCache.TryGet(connectionId, out var cached))
         {
-            // Management capability isn't part of the cached entity payload; derive it from the
-            // (cheap, cached) admin-availability flag so the cache hit stays consistent.
             var cachedSupportsManagement = !connection.IsEmulator
                 || (_clientCache.GetEmulatorAdminAvailability(connectionId) ?? false);
             return (cached.Queues, cached.Topics, cachedSupportsManagement);
@@ -91,15 +79,12 @@ public class ServiceBusService : IServiceBusService
         var queues = new List<QueueInfoDto>();
         var topics = new List<TopicInfoDto>();
 
-        // Re-probe the emulator management port on an explicit refresh so an emulator started
-        // after the initial check is detected. Real connections always get an admin client.
         var adminClient = await GetManagementClientAsync(connection, forceProbe: refreshCache, cancellationToken);
         var supportsManagement = adminClient != null;
 
         if (adminClient == null)
         {
-            // Emulator with no reachable management API: fall back to the stored config and
-            // report zero counts (the emulator's data plane can't surface them here).
+            // Emulator with no reachable management API: fall back to the stored config (zero counts).
             if (connection.EmulatorConfigId.HasValue)
             {
                 var queueConfigs = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
@@ -116,9 +101,8 @@ public class ServiceBusService : IServiceBusService
         }
         else
         {
-            // Real Service Bus or an emulator with a reachable management API: use the
-            // Administration client. RequiresSession lives on the entity properties (not the
-            // runtime properties that carry message counts), so we pull both and merge by name.
+            // RequiresSession lives on the entity properties (not the runtime properties that
+            // carry message counts), so we pull both and merge by name.
             var sessionByQueue = new Dictionary<string, bool>();
             await foreach (var queue in adminClient.GetQueuesAsync(cancellationToken))
             {

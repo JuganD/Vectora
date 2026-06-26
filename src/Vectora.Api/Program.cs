@@ -32,6 +32,8 @@ builder.Services.AddScoped<IServiceBusService, ServiceBusService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
 
+builder.Services.AddHostedService<EntityCacheWarmupService>();
+
 // Configure request body size limit (10MB max)
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -45,7 +47,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<VectoraDbContext>();
     db.Database.Migrate();
-    
+
     // Enable WAL mode for better concurrency and crash recovery
     db.Database.ExecuteSql($"PRAGMA journal_mode = 'WAL';");
     db.Database.ExecuteSql($"PRAGMA busy_timeout = 5000;");

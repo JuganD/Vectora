@@ -9,15 +9,7 @@ import SettingsDialog from './SettingsDialog';
 
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
-// After a successful entity fetch, switching back to that connection within this window shows
-// the cached data without re-fetching. Kept in memory only — a full app reload always refetches.
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
-
-interface CachedEntities {
-  queues: QueueInfo[];
-  topics: TopicInfo[];
-  supportsManagement: boolean;
-}
 
 // Hook to detect mobile viewport
 function useIsMobile() {
@@ -40,9 +32,6 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
   const [queues, setQueues] = useState<QueueInfo[]>([]);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
-  // Whether the selected connection exposes the management API (always true for real Service
-  // Bus; for emulators, true only when the admin port is reachable). Gates create/edit/delete
-  // and runtime-count refreshes in the UI.
   const [supportsManagement, setSupportsManagement] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,8 +48,6 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (isMobile && entity) {
       setShowMobileSidebar(false);
     }
-    // Auto-fetch runtime counts whenever the management API is available
-    // (real Service Bus, or an emulator with a reachable admin port).
     if (entity && selectedConnection && supportsManagement) {
       updateEntityCount(entity);
     }
@@ -82,48 +69,54 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     }
   };
 
-  // Per-connection in-memory cache of the last fetched entities, the last successful fetch time
-  // (for throttling), and the set of connections with a fetch currently in flight. All refs:
-  // they survive re-renders/switches without causing renders, and are intentionally lost on a
-  // full app reload (we always re-fetch fresh then).
-  const entityCacheRef = useRef<Map<number, CachedEntities>>(new Map());
   const lastRefreshRef = useRef<Map<number, number>>(new Map());
-  const inFlightRef = useRef<Set<number>>(new Set());
+  const inFlightRefreshRef = useRef<Set<number>>(new Set());
 
-  // Always-current view of the selected connection, read by async fetch callbacks after their
-  // await so a late response only touches the screen when its connection is still active.
   const selectedConnectionRef = useRef(selectedConnection);
   selectedConnectionRef.current = selectedConnection;
 
-  // Fetch fresh entities for a connection. The result is always cached + timestamped, but the
-  // visible state and loading flag are only updated when that connection is still selected — so
-  // switching away mid-fetch saves the data to its cache without hijacking the current screen.
-  const loadEntities = useCallback(async (connectionId: number) => {
-    if (inFlightRef.current.has(connectionId)) return; // a fetch for this connection is already running
-    inFlightRef.current.add(connectionId);
+  const applyEntities = useCallback((data: { queues: QueueInfo[]; topics: TopicInfo[]; supportsManagement: boolean }) => {
+    setQueues(data.queues);
+    setTopics(data.topics);
+    setSupportsManagement(data.supportsManagement);
+  }, []);
+
+  const refreshConnection = useCallback(async (connectionId: number) => {
+    if (inFlightRefreshRef.current.has(connectionId)) return;
+    inFlightRefreshRef.current.add(connectionId);
     if (selectedConnectionRef.current?.id === connectionId) setLoading(true);
     try {
       const data = await getEntities(connectionId, true);
-      const cached: CachedEntities = { queues: data.queues, topics: data.topics, supportsManagement: data.supportsManagement };
-      entityCacheRef.current.set(connectionId, cached);
       lastRefreshRef.current.set(connectionId, Date.now());
-      if (selectedConnectionRef.current?.id === connectionId) {
-        setQueues(cached.queues);
-        setTopics(cached.topics);
-        setSupportsManagement(cached.supportsManagement);
-      }
+      if (selectedConnectionRef.current?.id === connectionId) applyEntities(data);
     } catch (error) {
-      console.error('Failed to load entities:', error);
+      console.error('Failed to refresh entities:', error);
     } finally {
-      inFlightRef.current.delete(connectionId);
+      inFlightRefreshRef.current.delete(connectionId);
       if (selectedConnectionRef.current?.id === connectionId) setLoading(false);
     }
-  }, []);
+  }, [applyEntities]);
 
-  // Manual refresh / post-mutation refresh: fetch now, bypassing the throttle window.
+  const openConnection = useCallback(async (connectionId: number) => {
+    if (selectedConnectionRef.current?.id === connectionId) setLoading(true);
+    try {
+      const data = await getEntities(connectionId, false);
+      if (selectedConnectionRef.current?.id === connectionId) applyEntities(data);
+    } catch (error) {
+      console.error('Failed to load cached entities:', error);
+    }
+    const lastRefresh = lastRefreshRef.current.get(connectionId) ?? 0;
+    const stale = Date.now() - lastRefresh >= REFRESH_THROTTLE_MS;
+    if (stale && !inFlightRefreshRef.current.has(connectionId)) {
+      refreshConnection(connectionId);
+    } else if (selectedConnectionRef.current?.id === connectionId) {
+      setLoading(false);
+    }
+  }, [applyEntities, refreshConnection]);
+
   const refreshEntities = useCallback(() => {
-    if (selectedConnectionRef.current) loadEntities(selectedConnectionRef.current.id);
-  }, [loadEntities]);
+    if (selectedConnectionRef.current) refreshConnection(selectedConnectionRef.current.id);
+  }, [refreshConnection]);
 
   const handleSelectConnection = (conn: Connection | null) => {
     setSelectedConnection(conn);
@@ -142,20 +135,14 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       if (entity.type === 'queue') {
         const info = await getQueueRuntimeInfo(connectionId, entity.name);
         if (selectedConnectionRef.current?.id !== connectionId) return;
-        const patch = (q: QueueInfo) => q.name === entity.name ? { ...q, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount } : q;
-        setQueues(prev => prev.map(patch));
-        const cached = entityCacheRef.current.get(connectionId);
-        if (cached) entityCacheRef.current.set(connectionId, { ...cached, queues: cached.queues.map(patch) });
+        setQueues(prev => prev.map(q => q.name === entity.name ? { ...q, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount } : q));
       } else if (entity.type === 'subscription' && entity.topicName) {
         const info = await getSubscriptionRuntimeInfo(connectionId, entity.topicName, entity.name);
         if (selectedConnectionRef.current?.id !== connectionId) return;
-        const patch = (t: TopicInfo) => t.name === entity.topicName ? {
+        setTopics(prev => prev.map(t => t.name === entity.topicName ? {
           ...t,
           subscriptions: t.subscriptions.map(s => s.name === entity.name ? { ...s, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount } : s)
-        } : t;
-        setTopics(prev => prev.map(patch));
-        const cached = entityCacheRef.current.get(connectionId);
-        if (cached) entityCacheRef.current.set(connectionId, { ...cached, topics: cached.topics.map(patch) });
+        } : t));
       }
     } catch (error) {
       console.error('Failed to update entity count:', error);
@@ -176,29 +163,11 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       setLoading(false);
       return;
     }
-    // Show this connection's cached entities instantly (if any) so the user can keep working
-    // while a background refresh runs; otherwise start empty with a loading indicator.
-    const cached = entityCacheRef.current.get(conn.id);
-    if (cached) {
-      setQueues(cached.queues);
-      setTopics(cached.topics);
-      setSupportsManagement(cached.supportsManagement);
-    } else {
-      setQueues([]);
-      setTopics([]);
-      setSupportsManagement(false);
-    }
-    // The loading indicator reflects only an in-flight fetch for THIS connection.
-    setLoading(inFlightRef.current.has(conn.id));
-    // Background refresh, throttled per connection: skip when we just showed cache that was
-    // refreshed within the throttle window. A late response is guarded by connection id in
-    // loadEntities, so switching away mid-fetch never refreshes the wrong screen.
-    const lastRefresh = lastRefreshRef.current.get(conn.id) ?? 0;
-    const stale = Date.now() - lastRefresh >= REFRESH_THROTTLE_MS;
-    if (!cached || stale) {
-      loadEntities(conn.id);
-    }
-  }, [selectedConnection, loadEntities]);
+    setQueues([]);
+    setTopics([]);
+    setSupportsManagement(false);
+    openConnection(conn.id);
+  }, [selectedConnection, openConnection]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

@@ -45,9 +45,8 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
 
     public ServiceBusAdministrationClient GetEmulatorAdminClient(int connectionId, string connectionString, string adminConnectionString)
     {
-        // Identity is the original (data-plane) connection string — same as GetClient — so the
-        // two never invalidate each other. The admin client itself is built from the
-        // management-port variant.
+        // Identity is the original connection string (same as GetClient) so the two never
+        // invalidate each other; the client is built from the management-port variant.
         if (_connectionStrings.TryGetValue(connectionId, out var existingConnectionString)
             && existingConnectionString != connectionString)
         {

@@ -14,8 +14,6 @@ interface EntityBrowserProps {
   onSelectEntity: (entity: SelectedEntity | null) => void;
   onRefresh: () => void;
   loading: boolean;
-  // True when entity management (create/edit/delete) is available: real Service Bus, or an
-  // emulator whose admin port is reachable. When false, the browser is read-only.
   canManage: boolean;
 }
 
