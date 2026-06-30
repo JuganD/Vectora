@@ -39,6 +39,16 @@ public class ExceptionHandlingMiddleware
             _logger.LogWarning("Service Bus entity not found: {Message}", sbEx.Message);
             await HandleExceptionAsync(context, sbEx, HttpStatusCode.NotFound, "Queue, topic, or subscription not found");
         }
+        catch (UnauthorizedAccessException uaEx)
+        {
+            // A bad connection-string key surfaces here (the Service Bus SDK throws this when token
+            // authorization fails). It is a downstream failure, so report 502 - never 401. A 401
+            // would be read by the SPA as "your app session expired", which clears the token and
+            // reloads the page, looping forever against a wrong key.
+            _logger.LogWarning("Service Bus authorization failed for request {Method} {Path}: {Message}",
+                context.Request.Method, context.Request.Path, uaEx.Message);
+            await HandleExceptionAsync(context, uaEx, HttpStatusCode.BadGateway, "Service Bus authorization failed. Check the connection string's shared access key.");
+        }
         catch (ServiceBusException sbEx)
         {
             // Other Service Bus errors
@@ -65,7 +75,6 @@ public class ExceptionHandlingMiddleware
             _ => exception switch
             {
                 ArgumentException => (HttpStatusCode.BadRequest, "Invalid request parameters"),
-                UnauthorizedAccessException => (HttpStatusCode.Unauthorized, "Unauthorized"),
                 KeyNotFoundException => (HttpStatusCode.NotFound, "Resource not found"),
                 InvalidOperationException => (HttpStatusCode.BadRequest, "Invalid operation"),
                 _ => (HttpStatusCode.InternalServerError, "An unexpected error occurred")

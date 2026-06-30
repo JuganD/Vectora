@@ -24,7 +24,10 @@ async function fetchApi<T>(path: string, options: RequestInit = {}): Promise<T> 
 
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
-  if (response.status === 401) {
+  // Only an auth-layer 401 (expired/missing app token) should drop the session and reload.
+  // The backend tags those with X-Auth-Failure; any other 401 (e.g. a Service Bus resource
+  // error) is surfaced as a normal error so a bad connection can't loop the page forever.
+  if (response.status === 401 && response.headers.get('X-Auth-Failure') === '1') {
     localStorage.removeItem('vectora_token');
     window.location.reload();
     throw new Error('Unauthorized');

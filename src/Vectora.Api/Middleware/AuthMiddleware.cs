@@ -43,8 +43,7 @@ public class AuthMiddleware
         if (!context.Request.Headers.TryGetValue("Authorization", out var authHeader) ||
             string.IsNullOrEmpty(authHeader))
         {
-            context.Response.StatusCode = 401;
-            await context.Response.WriteAsJsonAsync(new { error = "Authentication required" });
+            await WriteAuthFailureAsync(context, "Authentication required");
             return;
         }
 
@@ -52,8 +51,7 @@ public class AuthMiddleware
         var headerValue = authHeader.ToString();
         if (!headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            context.Response.StatusCode = 401;
-            await context.Response.WriteAsJsonAsync(new { error = "Invalid authorization header format" });
+            await WriteAuthFailureAsync(context, "Invalid authorization header format");
             return;
         }
 
@@ -62,11 +60,20 @@ public class AuthMiddleware
         // Validate JWT token
         if (!jwtService.ValidateToken(token))
         {
-            context.Response.StatusCode = 401;
-            await context.Response.WriteAsJsonAsync(new { error = "Invalid or expired token" });
+            await WriteAuthFailureAsync(context, "Invalid or expired token");
             return;
         }
 
         await _next(context);
+    }
+
+    // Marks a 401 as coming from the app's own authentication layer (expired/missing JWT) rather
+    // than from a downstream resource. The SPA only clears its token and reloads on this signal,
+    // so an unrelated 401 can never trap the user in a reload loop.
+    private static async Task WriteAuthFailureAsync(HttpContext context, string error)
+    {
+        context.Response.StatusCode = 401;
+        context.Response.Headers["X-Auth-Failure"] = "1";
+        await context.Response.WriteAsJsonAsync(new { error });
     }
 }

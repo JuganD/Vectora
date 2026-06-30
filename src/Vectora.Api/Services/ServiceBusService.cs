@@ -13,15 +13,17 @@ public class ServiceBusService : IServiceBusService
     private readonly IServiceBusClientCache _clientCache;
     private readonly IServiceBusEntityCache _entityCache;
     private readonly ISettingsService _settingsService;
+    private readonly ILogger<ServiceBusService> _logger;
     private readonly int _emulatorAdminPort;
 
-    public ServiceBusService(IConnectionRepository connectionRepository, IEmulatorConfigService emulatorConfigService, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService, IConfiguration configuration)
+    public ServiceBusService(IConnectionRepository connectionRepository, IEmulatorConfigService emulatorConfigService, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService, ILogger<ServiceBusService> logger, IConfiguration configuration)
     {
         _connectionRepository = connectionRepository;
         _emulatorConfigService = emulatorConfigService;
         _clientCache = clientCache;
         _entityCache = entityCache;
         _settingsService = settingsService;
+        _logger = logger;
         _emulatorAdminPort = configuration.GetValue<int?>("EmulatorAdminPort") ?? EmulatorAdmin.DefaultAdminPort;
     }
 
@@ -82,59 +84,88 @@ public class ServiceBusService : IServiceBusService
         var adminClient = await GetManagementClientAsync(connection, forceProbe: refreshCache, cancellationToken);
         var supportsManagement = adminClient != null;
 
-        if (adminClient == null)
+        if (adminClient != null)
         {
-            // Emulator with no reachable management API: fall back to the stored config (zero counts).
-            if (connection.EmulatorConfigId.HasValue)
+            try
             {
-                var queueConfigs = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
-                queues.AddRange(queueConfigs.Select(q => new QueueInfoDto { Name = q.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, IsEmulator = true, RequiresSession = q.RequiresSession }));
-
-                var topicData = await _emulatorConfigService.GetTopicsFromConfigAsync(connection.EmulatorConfigId.Value);
-                topics.AddRange(topicData.Select(t => new TopicInfoDto
-                {
-                    Name = t.TopicName,
-                    Subscriptions = t.Subscriptions.Select(s => new SubscriptionInfoDto { Name = s.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, RequiresSession = s.RequiresSession }).ToList(),
-                    IsEmulator = true
-                }));
+                await PopulateFromAdminAsync(adminClient, connection, queues, topics, cancellationToken);
+            }
+            catch (Exception ex) when (connection.IsEmulator && ex is not OperationCanceledException)
+            {
+                // An old emulator can answer the TCP probe on the admin port without actually
+                // implementing the management REST API, so enumeration throws. Don't let that
+                // hide the entities: mark management unavailable and fall back to the stored
+                // config (names only, zero counts) so the user can still browse and read messages.
+                _logger.LogWarning(ex, "Emulator admin enumeration failed for connection '{Name}' (id {Id}); falling back to the stored config.", connection.Name, connectionId);
+                _clientCache.SetEmulatorAdminAvailability(connectionId, false);
+                supportsManagement = false;
+                queues.Clear();
+                topics.Clear();
+                await PopulateFromConfigAsync(connection, queues, topics);
             }
         }
         else
         {
-            // RequiresSession lives on the entity properties (not the runtime properties that
-            // carry message counts), so we pull both and merge by name.
-            var sessionByQueue = new Dictionary<string, bool>();
-            await foreach (var queue in adminClient.GetQueuesAsync(cancellationToken))
-            {
-                sessionByQueue[queue.Name] = queue.RequiresSession;
-            }
-
-            await foreach (var queue in adminClient.GetQueuesRuntimePropertiesAsync(cancellationToken))
-            {
-                queues.Add(new QueueInfoDto { Name = queue.Name, ActiveMessageCount = queue.ActiveMessageCount, DeadLetterMessageCount = queue.DeadLetterMessageCount, IsEmulator = connection.IsEmulator, RequiresSession = sessionByQueue.GetValueOrDefault(queue.Name) });
-            }
-
-            await foreach (var topic in adminClient.GetTopicsAsync(cancellationToken))
-            {
-                var sessionBySubscription = new Dictionary<string, bool>();
-                await foreach (var sub in adminClient.GetSubscriptionsAsync(topic.Name, cancellationToken))
-                {
-                    sessionBySubscription[sub.SubscriptionName] = sub.RequiresSession;
-                }
-
-                var subs = new List<SubscriptionInfoDto>();
-                await foreach (var sub in adminClient.GetSubscriptionsRuntimePropertiesAsync(topic.Name, cancellationToken))
-                {
-                    subs.Add(new SubscriptionInfoDto { Name = sub.SubscriptionName, ActiveMessageCount = sub.ActiveMessageCount, DeadLetterMessageCount = sub.DeadLetterMessageCount, RequiresSession = sessionBySubscription.GetValueOrDefault(sub.SubscriptionName) });
-                }
-                topics.Add(new TopicInfoDto { Name = topic.Name, Subscriptions = subs, IsEmulator = connection.IsEmulator });
-            }
+            // Emulator with no reachable management API: fall back to the stored config (zero counts).
+            await PopulateFromConfigAsync(connection, queues, topics);
         }
 
         var orderedQueues = queues.OrderBy(q => q.Name).ToList();
         var orderedTopics = topics.OrderBy(t => t.Name).ToList();
         _entityCache.Set(connectionId, orderedQueues, orderedTopics);
         return (orderedQueues, orderedTopics, supportsManagement);
+    }
+
+    // Enumerate entities and real message counts through the administration client (real Service
+    // Bus, or an emulator whose management API is reachable).
+    private static async Task PopulateFromAdminAsync(ServiceBusAdministrationClient adminClient, ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics, CancellationToken cancellationToken)
+    {
+        // RequiresSession lives on the entity properties (not the runtime properties that
+        // carry message counts), so we pull both and merge by name.
+        var sessionByQueue = new Dictionary<string, bool>();
+        await foreach (var queue in adminClient.GetQueuesAsync(cancellationToken))
+        {
+            sessionByQueue[queue.Name] = queue.RequiresSession;
+        }
+
+        await foreach (var queue in adminClient.GetQueuesRuntimePropertiesAsync(cancellationToken))
+        {
+            queues.Add(new QueueInfoDto { Name = queue.Name, ActiveMessageCount = queue.ActiveMessageCount, DeadLetterMessageCount = queue.DeadLetterMessageCount, IsEmulator = connection.IsEmulator, RequiresSession = sessionByQueue.GetValueOrDefault(queue.Name) });
+        }
+
+        await foreach (var topic in adminClient.GetTopicsAsync(cancellationToken))
+        {
+            var sessionBySubscription = new Dictionary<string, bool>();
+            await foreach (var sub in adminClient.GetSubscriptionsAsync(topic.Name, cancellationToken))
+            {
+                sessionBySubscription[sub.SubscriptionName] = sub.RequiresSession;
+            }
+
+            var subs = new List<SubscriptionInfoDto>();
+            await foreach (var sub in adminClient.GetSubscriptionsRuntimePropertiesAsync(topic.Name, cancellationToken))
+            {
+                subs.Add(new SubscriptionInfoDto { Name = sub.SubscriptionName, ActiveMessageCount = sub.ActiveMessageCount, DeadLetterMessageCount = sub.DeadLetterMessageCount, RequiresSession = sessionBySubscription.GetValueOrDefault(sub.SubscriptionName) });
+            }
+            topics.Add(new TopicInfoDto { Name = topic.Name, Subscriptions = subs, IsEmulator = connection.IsEmulator });
+        }
+    }
+
+    // Read entity names from the stored emulator config (no message counts). Used when the
+    // emulator's management API is unavailable; no-op if the connection has no linked config.
+    private async Task PopulateFromConfigAsync(ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics)
+    {
+        if (!connection.EmulatorConfigId.HasValue) return;
+
+        var queueConfigs = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
+        queues.AddRange(queueConfigs.Select(q => new QueueInfoDto { Name = q.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, IsEmulator = true, RequiresSession = q.RequiresSession }));
+
+        var topicData = await _emulatorConfigService.GetTopicsFromConfigAsync(connection.EmulatorConfigId.Value);
+        topics.AddRange(topicData.Select(t => new TopicInfoDto
+        {
+            Name = t.TopicName,
+            Subscriptions = t.Subscriptions.Select(s => new SubscriptionInfoDto { Name = s.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, RequiresSession = s.RequiresSession }).ToList(),
+            IsEmulator = true
+        }));
     }
 
     public async Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName)
