@@ -11,6 +11,7 @@ A modern, self-hosted Azure Service Bus explorer — a lightweight alternative t
 - 📨 Send and receive messages
 - 🔐 Secure connection management with encrypted storage
 - 🎨 Modern web interface with Monaco editor for message editing
+- 🤖 **Built-in MCP server** — let AI agents browse and interact your Service Bus ([docs](docs/MCP.md))
 - 🐳 Easy deployment with Docker
 
 ## Tech Stack
@@ -85,6 +86,21 @@ Endpoint=sb://<your service bus emulator container>;SharedAccessKeyName=RootMana
 ```
 
 The purpose of requesting connection string for the emulator, is that you can choose to have a shared emulator, inside a virtual private network. In that case, the endpoint will be different.
+
+## MCP server (for AI agents)
+
+Vectora ships with a built-in **MCP (Model Context Protocol) server**, so AI agents can
+connect to Service Bus — list connections and entities, peek
+active and dead-letter messages (with full data), and send messages.
+
+Enable it in **Settings → MCP Server**: flip it on, optionally set an API key, then choose which
+connections agents may read and which they may send to. Point your agent at `<your-host>/mcp`.
+Reads are peek-only (non-destructive), and nothing is exposed until you opt a connection in.
+
+There's also a ready-made [drop-in skill](docs/mcp-skill/SKILL.md) that teaches an agent exactly
+what it can fetch and how — including asking you for the MCP key when it can't reach the server.
+
+👉 **Full guide: [docs/MCP.md](docs/MCP.md)**
 
 ## Development
 You are assuming correctly, it is an AI project. But also one that I'm using every single day.  

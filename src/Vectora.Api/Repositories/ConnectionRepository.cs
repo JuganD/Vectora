@@ -70,6 +70,22 @@ public class ConnectionRepository : IConnectionRepository
         return connection;
     }
 
+    public async Task<ServiceBusConnection?> UpdateMcpFlagsAsync(int id, bool mcpExposed, bool mcpAllowSend)
+    {
+        var connection = await _db.Connections.FindAsync(id);
+        if (connection == null)
+        {
+            return null;
+        }
+
+        connection.McpExposed = mcpExposed;
+        // Sending requires exposure; clamp so "allow send" can't linger on a hidden connection.
+        connection.McpAllowSend = mcpExposed && mcpAllowSend;
+
+        await _db.SaveChangesAsync();
+        return connection;
+    }
+
     public async Task<bool> DeleteAsync(int id)
     {
         var connection = await _db.Connections.FindAsync(id);

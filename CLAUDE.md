@@ -94,6 +94,19 @@ Minimal APIs grouped in `Endpoints/`:
 
 DTOs live in `Models/Dtos/`. `ValidationHelper` enforces entity-name and message-body/`maxMessages` rules at the endpoint boundary.
 
+### MCP server
+
+Vectora hosts a built-in MCP server (Model Context Protocol) at `/mcp` so AI agents can browse and test Service Bus. It uses the official `ModelContextProtocol.AspNetCore` SDK over Streamable HTTP, registered in `Program.cs` (`AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp("/mcp")`). Tools are defined in `Mcp/ServiceBusTools.cs` (`[McpServerToolType]` / `[McpServerTool]`) and delegate to the existing `IServiceBusService` and `IConnectionRepository` — no duplicated Service Bus logic.
+
+Tools: `list_connections`, `list_entities`, `peek_messages`, `peek_dead_letter_messages`, `send_message`.
+
+**Safety model (important):**
+- **Reads are peek-only.** The read tools call `PeekMessagesAsync` exclusively, never receive/consume — browsing never locks or removes messages, consistent with the "production reads must be lock-free" rule.
+- **Per-connection exposure.** A connection is invisible and unreadable to MCP unless its `ServiceBusConnection.McpExposed` flag is set; `send_message` additionally requires `McpAllowSend`. Both default `false`, so new/production connections are dark until explicitly opted in (added by the `AddMcpConnectionFlags` migration). Flags are set via `PUT /api/connections/{id}/mcp` and the MCP section of the Settings dialog.
+- Read tools clamp results to ≤1000 (default 50) and return a `nextSequenceNumber` cursor for paging.
+
+**Gating & auth.** `McpAuthMiddleware` (runs after `AuthMiddleware`, acts only on `/mcp`) reads two DB-backed settings each request: `McpEnabled` (off → 404, so toggling takes effect with no restart) and `McpApiKey` (when set, requires `Authorization: Bearer <key>`, timing-safe compared; empty → open). This is fully independent of `VECTORA_PASSWORD` — `/mcp` is not under `/api`, so the SPA's JWT layer lets it through. The raw key is never returned by `/api/settings` (only a `mcpApiKeySet` boolean).
+
 ### Frontend structure
 
 Single-page app under `src/Vectora.Client/src/`:

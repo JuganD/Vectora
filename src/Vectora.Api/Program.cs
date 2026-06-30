@@ -34,6 +34,11 @@ builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
 
 builder.Services.AddHostedService<EntityCacheWarmupService>();
 
+// MCP server for AI agents; tools are discovered from [McpServerToolType] classes in this assembly.
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithToolsFromAssembly();
+
 // Configure request body size limit (10MB max)
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -70,6 +75,10 @@ app.UseStaticFiles();
 
 // 5. Authentication middleware
 app.UseMiddleware<AuthMiddleware>();
+
+// 6. MCP gating (acts only on /mcp; reads enable+key from the DB per request)
+app.UseMiddleware<McpAuthMiddleware>();
+app.MapMcp("/mcp");
 
 // Map minimal API endpoints
 app.MapAuthEndpoints();

@@ -11,6 +11,11 @@ export default defineConfig({
         target: 'http://localhost:5244',
         changeOrigin: true,
       },
+      // MCP endpoint lives on the backend; proxy it so the dev-server origin works for agents too.
+      '/mcp': {
+        target: 'http://localhost:5244',
+        changeOrigin: true,
+      },
     },
   },
   build: {

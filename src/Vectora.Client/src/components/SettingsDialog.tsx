@@ -1,6 +1,12 @@
 import { useState, useEffect } from "react";
-import { X, Settings } from "lucide-react";
-import { getSettings, updateSettings } from "../api/client";
+import { X, Settings, Bot, Copy, Check } from "lucide-react";
+import {
+  getSettings,
+  updateSettings,
+  getConnections,
+  updateConnectionMcpFlags,
+} from "../api/client";
+import type { Connection } from "../types";
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -8,21 +14,56 @@ interface SettingsDialogProps {
 
 export default function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [batchTimeout, setBatchTimeout] = useState("60");
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [mcpApiKeySet, setMcpApiKeySet] = useState(false);
+  const [mcpApiKey, setMcpApiKey] = useState("");
+  const [clearMcpApiKey, setClearMcpApiKey] = useState(false);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const mcpUrl = `${window.location.origin}/mcp`;
 
   useEffect(() => {
-    loadSettings();
+    loadData();
   }, []);
 
-  const loadSettings = async () => {
+  const loadData = async () => {
     try {
-      const data = await getSettings();
-      setBatchTimeout(data.batchOperationTimeoutSeconds.toString());
+      const [settings, conns] = await Promise.all([
+        getSettings(),
+        getConnections(),
+      ]);
+      setBatchTimeout(settings.batchOperationTimeoutSeconds.toString());
+      setMcpEnabled(settings.mcpEnabled);
+      setMcpApiKeySet(settings.mcpApiKeySet);
+      setConnections(conns);
     } catch (error) {
       console.error("Failed to load settings:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Per-connection MCP flags persist immediately via their own endpoint.
+  const setConnectionFlags = async (
+    conn: Connection,
+    mcpExposed: boolean,
+    mcpAllowSend: boolean
+  ) => {
+    const allowSend = mcpExposed && mcpAllowSend; // sending requires exposure
+    const previous = connections;
+    setConnections((prev) =>
+      prev.map((c) =>
+        c.id === conn.id ? { ...c, mcpExposed, mcpAllowSend: allowSend } : c
+      )
+    );
+    try {
+      await updateConnectionMcpFlags(conn.id, mcpExposed, allowSend);
+    } catch (error) {
+      console.error("Failed to update connection MCP flags:", error);
+      setConnections(previous); // revert on failure
     }
   };
 
@@ -32,6 +73,12 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
       const timeout = parseInt(batchTimeout) || 60;
       const updated = await updateSettings({
         batchOperationTimeoutSeconds: timeout,
+        mcpEnabled,
+        ...(clearMcpApiKey
+          ? { clearMcpApiKey: true }
+          : mcpApiKey
+          ? { mcpApiKey }
+          : {}),
       });
       setBatchTimeout(updated.batchOperationTimeoutSeconds.toString());
       onClose();
@@ -42,13 +89,23 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
     }
   };
 
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(mcpUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-md p-4"
+        className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg p-4 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -66,7 +123,7 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
             Loading settings...
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-dark-300 mb-1">
                 Batch Operation Timeout (seconds)
@@ -88,7 +145,172 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
               </p>
             </div>
 
-            <div className="flex gap-2 justify-end mt-6">
+            {/* MCP server */}
+            <div className="border-t border-dark-600 pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Bot className="w-4 h-4 text-primary-400" />
+                <h4 className="text-sm font-semibold text-white">MCP Server</h4>
+              </div>
+              <p className="text-xs text-dark-400 mb-3">
+                Expose selected connections to AI agents over the Model Context Protocol for
+                investigation and testing. Reads are peek-only (non-destructive); sending is
+                opt-in per connection.
+              </p>
+
+              <label className="flex items-center gap-2 cursor-pointer mb-3">
+                <input
+                  type="checkbox"
+                  checked={mcpEnabled}
+                  onChange={(e) => setMcpEnabled(e.target.checked)}
+                  className="w-4 h-4 accent-primary-500"
+                />
+                <span className="text-sm text-dark-200">Enable MCP server</span>
+              </label>
+
+              {mcpEnabled && (
+                <div className="space-y-4 pl-1">
+                  <div>
+                    <label className="block text-xs font-medium text-dark-300 mb-1">
+                      Endpoint URL
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 px-2 py-1.5 bg-dark-900 border border-dark-600 rounded text-xs text-primary-300 truncate">
+                        {mcpUrl}
+                      </code>
+                      <button
+                        onClick={copyUrl}
+                        className="p-1.5 bg-dark-700 hover:bg-dark-600 rounded text-dark-300"
+                        title="Copy URL"
+                      >
+                        {copied ? (
+                          <Check className="w-4 h-4 text-green-400" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-dark-300 mb-1">
+                      API Key (optional)
+                    </label>
+                    <input
+                      type="password"
+                      value={mcpApiKey}
+                      onChange={(e) => {
+                        setMcpApiKey(e.target.value);
+                        setClearMcpApiKey(false);
+                      }}
+                      className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      placeholder={
+                        mcpApiKeySet && !clearMcpApiKey
+                          ? "•••••••• (configured)"
+                          : "No key — authorization not required"
+                      }
+                    />
+                    <p className="text-xs text-dark-500 mt-1">
+                      Agents authorize with{" "}
+                      <code className="text-dark-400">Authorization: Bearer &lt;key&gt;</code>.
+                      Leave empty for no authorization.
+                      {mcpApiKeySet && !clearMcpApiKey && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClearMcpApiKey(true);
+                              setMcpApiKey("");
+                            }}
+                            className="text-red-400 hover:text-red-300 underline"
+                          >
+                            Remove key
+                          </button>
+                        </>
+                      )}
+                      {clearMcpApiKey && (
+                        <span className="text-amber-400"> Key will be removed on save.</span>
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-dark-300 mb-2">
+                      Exposed connections
+                    </label>
+                    {connections.length === 0 ? (
+                      <p className="text-xs text-dark-500">No connections yet.</p>
+                    ) : (
+                      <div className="border border-dark-600 rounded-lg overflow-hidden">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-dark-900 text-dark-400 text-xs">
+                              <th className="text-left font-medium px-3 py-2">
+                                Connection
+                              </th>
+                              <th className="font-medium px-3 py-2 w-20">Expose</th>
+                              <th className="font-medium px-3 py-2 w-24">Allow send</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {connections.map((conn) => (
+                              <tr
+                                key={conn.id}
+                                className="border-t border-dark-700"
+                              >
+                                <td className="px-3 py-2 text-dark-200 truncate max-w-[12rem]">
+                                  {conn.name}
+                                  {conn.isEmulator && (
+                                    <span className="ml-2 text-[10px] uppercase text-dark-500">
+                                      emulator
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={conn.mcpExposed}
+                                    onChange={(e) =>
+                                      setConnectionFlags(
+                                        conn,
+                                        e.target.checked,
+                                        conn.mcpAllowSend
+                                      )
+                                    }
+                                    className="w-4 h-4 accent-primary-500"
+                                  />
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={conn.mcpAllowSend}
+                                    disabled={!conn.mcpExposed}
+                                    onChange={(e) =>
+                                      setConnectionFlags(
+                                        conn,
+                                        conn.mcpExposed,
+                                        e.target.checked
+                                      )
+                                    }
+                                    className="w-4 h-4 accent-primary-500 disabled:opacity-30"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <p className="text-xs text-dark-500 mt-1">
+                      Unexposed connections are invisible to agents. Production stays hidden
+                      unless you check it here.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 justify-end">
               <button
                 onClick={onClose}
                 className="px-4 py-2 bg-dark-600 hover:bg-dark-500 text-white text-sm rounded-lg"

@@ -24,19 +24,15 @@ public static class ConnectionEndpoints
 
         group.MapDelete("/{id:int}", Delete)
             .WithName("DeleteConnection");
+
+        group.MapPut("/{id:int}/mcp", UpdateMcpFlags)
+            .WithName("UpdateConnectionMcpFlags");
     }
 
     private static async Task<IResult> GetAll(IConnectionRepository connectionRepository)
     {
         var connections = await connectionRepository.GetAllAsync();
-        var dtos = connections.Select(c => new ConnectionDto
-        {
-            Id = c.Id,
-            Name = c.Name,
-            ConnectionString = c.ConnectionString,
-            IsEmulator = c.IsEmulator,
-            EmulatorConfigId = c.EmulatorConfigId
-        }).ToList();
+        var dtos = connections.Select(ToDto).ToList();
         return Results.Ok(dtos);
     }
 
@@ -48,14 +44,7 @@ public static class ConnectionEndpoints
             return Results.NotFound();
         }
 
-        return Results.Ok(new ConnectionDto
-        {
-            Id = connection.Id,
-            Name = connection.Name,
-            ConnectionString = connection.ConnectionString,
-            IsEmulator = connection.IsEmulator,
-            EmulatorConfigId = connection.EmulatorConfigId
-        });
+        return Results.Ok(ToDto(connection));
     }
 
     private static async Task<IResult> Create(CreateConnectionDto dto, IConnectionRepository connectionRepository)
@@ -74,16 +63,7 @@ public static class ConnectionEndpoints
         }
 
         var connection = await connectionRepository.CreateAsync(dto.Name, dto.ConnectionString, dto.IsEmulator, dto.EmulatorConfigId);
-        var result = new ConnectionDto
-        {
-            Id = connection.Id,
-            Name = connection.Name,
-            ConnectionString = connection.ConnectionString,
-            IsEmulator = connection.IsEmulator,
-            EmulatorConfigId = connection.EmulatorConfigId
-        };
-
-        return Results.Created($"/api/connections/{connection.Id}", result);
+        return Results.Created($"/api/connections/{connection.Id}", ToDto(connection));
     }
 
     private static async Task<IResult> Update(int id, UpdateConnectionDto dto, IConnectionRepository connectionRepository)
@@ -110,14 +90,7 @@ public static class ConnectionEndpoints
             return Results.NotFound();
         }
 
-        return Results.Ok(new ConnectionDto
-        {
-            Id = connection.Id,
-            Name = connection.Name,
-            ConnectionString = connection.ConnectionString,
-            IsEmulator = connection.IsEmulator,
-            EmulatorConfigId = connection.EmulatorConfigId
-        });
+        return Results.Ok(ToDto(connection));
     }
 
     private static async Task<IResult> Delete(int id, IConnectionRepository connectionRepository)
@@ -130,5 +103,27 @@ public static class ConnectionEndpoints
 
         return Results.NoContent();
     }
+
+    private static async Task<IResult> UpdateMcpFlags(int id, UpdateMcpFlagsDto dto, IConnectionRepository connectionRepository)
+    {
+        var connection = await connectionRepository.UpdateMcpFlagsAsync(id, dto.McpExposed, dto.McpAllowSend);
+        if (connection == null)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(ToDto(connection));
+    }
+
+    private static ConnectionDto ToDto(ServiceBusConnection c) => new()
+    {
+        Id = c.Id,
+        Name = c.Name,
+        ConnectionString = c.ConnectionString,
+        IsEmulator = c.IsEmulator,
+        EmulatorConfigId = c.EmulatorConfigId,
+        McpExposed = c.McpExposed,
+        McpAllowSend = c.McpAllowSend
+    };
 }
 

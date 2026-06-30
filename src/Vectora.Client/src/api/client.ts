@@ -80,8 +80,10 @@ export const createConnection = (data: CreateConnectionRequest) =>
   fetchApi<Connection>('/connections', { method: 'POST', body: JSON.stringify(data) });
 export const updateConnection = (id: number, data: Partial<CreateConnectionRequest>) =>
   fetchApi<Connection>(`/connections/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteConnection = (id: number) => 
+export const deleteConnection = (id: number) =>
   fetchApi<void>(`/connections/${id}`, { method: 'DELETE' });
+export const updateConnectionMcpFlags = (id: number, mcpExposed: boolean, mcpAllowSend: boolean) =>
+  fetchApi<Connection>(`/connections/${id}/mcp`, { method: 'PUT', body: JSON.stringify({ mcpExposed, mcpAllowSend }) });
 
 // Emulator configs
 export const getEmulatorConfigs = () => fetchApi<EmulatorConfig[]>('/emulator-configs');
@@ -187,10 +189,22 @@ export const cancelQueueScheduledBatch = (connectionId: number, queueName: strin
 // Settings
 export interface Settings {
   batchOperationTimeoutSeconds: number;
+  mcpEnabled: boolean;
+  // Whether an MCP API key is currently configured. The raw key is never returned by the API.
+  mcpApiKeySet: boolean;
+}
+
+export interface UpdateSettingsRequest {
+  batchOperationTimeoutSeconds?: number;
+  mcpEnabled?: boolean;
+  // New key to store; omit to leave unchanged.
+  mcpApiKey?: string;
+  // Set true to remove the existing key (no authorization required).
+  clearMcpApiKey?: boolean;
 }
 
 export const getSettings = () => fetchApi<Settings>('/settings');
-export const updateSettings = (settings: Partial<Settings>) =>
+export const updateSettings = (settings: UpdateSettingsRequest) =>
   fetchApi<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settings) });
 
 // Message templates

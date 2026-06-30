@@ -17,11 +17,7 @@ public static class SettingsEndpoints
 
     private static async Task<IResult> GetSettings(ISettingsService settingsService)
     {
-        var timeout = await settingsService.GetBatchOperationTimeoutSecondsAsync();
-        return Results.Ok(new
-        {
-            batchOperationTimeoutSeconds = timeout
-        });
+        return Results.Ok(await BuildResponseAsync(settingsService));
     }
 
     private static async Task<IResult> UpdateSettings([FromBody] UpdateSettingsRequest request, ISettingsService settingsService)
@@ -37,11 +33,34 @@ public static class SettingsEndpoints
         {
             await settingsService.SetBatchOperationTimeoutSecondsAsync(request.BatchOperationTimeoutSeconds.Value);
         }
-        var timeout = await settingsService.GetBatchOperationTimeoutSecondsAsync();
-        return Results.Ok(new
+
+        if (request.McpEnabled.HasValue)
         {
-            batchOperationTimeoutSeconds = timeout
-        });
+            await settingsService.SetMcpEnabledAsync(request.McpEnabled.Value);
+        }
+
+        // Clearing wins over setting a new value; otherwise only update when a key was supplied.
+        if (request.ClearMcpApiKey)
+        {
+            await settingsService.SetMcpApiKeyAsync(null);
+        }
+        else if (request.McpApiKey != null)
+        {
+            await settingsService.SetMcpApiKeyAsync(request.McpApiKey);
+        }
+
+        return Results.Ok(await BuildResponseAsync(settingsService));
+    }
+
+    // The raw MCP key is never echoed back to the client; only whether one is configured.
+    private static async Task<object> BuildResponseAsync(ISettingsService settingsService)
+    {
+        return new
+        {
+            batchOperationTimeoutSeconds = await settingsService.GetBatchOperationTimeoutSecondsAsync(),
+            mcpEnabled = await settingsService.GetMcpEnabledAsync(),
+            mcpApiKeySet = !string.IsNullOrEmpty(await settingsService.GetMcpApiKeyAsync())
+        };
     }
 }
 

@@ -4,6 +4,8 @@ export interface Connection {
   connectionString: string;
   isEmulator: boolean;
   emulatorConfigId?: number;
+  mcpExposed: boolean;
+  mcpAllowSend: boolean;
 }
 
 export interface QueueInfo {
