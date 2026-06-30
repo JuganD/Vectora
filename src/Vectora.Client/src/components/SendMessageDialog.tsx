@@ -25,6 +25,7 @@ interface SavedMessage {
   subject: string;
   messageId: string;
   correlationId: string;
+  replyTo: string;
   sessionId: string;
   properties: { key: string; value: string }[];
   sendMultiple?: boolean;
@@ -49,6 +50,7 @@ function loadSavedMessage(): SavedMessage {
     subject: '',
     messageId: '',
     correlationId: '',
+    replyTo: '',
     sessionId: '',
     properties: [],
     sendMultiple: false,
@@ -63,6 +65,7 @@ function templateToSavedMessage(template: ServiceBusMessage): SavedMessage {
     subject: template.subject || '',
     messageId: '', // Don't copy messageId - should be unique per message
     correlationId: template.correlationId || '',
+    replyTo: template.replyTo || '',
     sessionId: template.sessionId || '',
     properties: template.applicationProperties
       ? Object.entries(template.applicationProperties).map(([key, value]) => ({ key, value: String(value) }))
@@ -77,6 +80,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   const [subject, setSubject] = useState(initial.subject);
   const [messageId, setMessageId] = useState(initial.messageId);
   const [correlationId, setCorrelationId] = useState(initial.correlationId);
+  const [replyTo, setReplyTo] = useState(initial.replyTo);
   const [sessionId, setSessionId] = useState(initial.sessionId);
   const [properties, setProperties] = useState<{ key: string; value: string }[]>(initial.properties);
   const [sendMultiple, setSendMultiple] = useState(initial.sendMultiple ?? false);
@@ -108,9 +112,9 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
 
   // Save message state to localStorage on changes
   useEffect(() => {
-    const msg: SavedMessage = { body, contentType, subject, messageId, correlationId, sessionId, properties, sendMultiple, sendCount };
+    const msg: SavedMessage = { body, contentType, subject, messageId, correlationId, replyTo, sessionId, properties, sendMultiple, sendCount };
     localStorage.setItem(LAST_MESSAGE_KEY, JSON.stringify(msg));
-  }, [body, contentType, subject, messageId, correlationId, sessionId, properties, sendMultiple, sendCount]);
+  }, [body, contentType, subject, messageId, correlationId, replyTo, sessionId, properties, sendMultiple, sendCount]);
 
   // Load templates on mount
   useEffect(() => {
@@ -278,6 +282,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       subject: subject || undefined,
       messageId: messageId || undefined,
       correlationId: correlationId || undefined,
+      replyTo: replyTo || undefined,
       sessionId: sessionId || undefined,
       scheduledEnqueueTime: scheduleForLater && scheduledTime ? scheduledTime.toISOString() : undefined,
       applicationProperties: properties.length > 0
@@ -467,6 +472,17 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
                   type="text"
                   value={correlationId}
                   onChange={e => setCorrelationId(e.target.value)}
+                  placeholder="Optional"
+                  className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-dark-300 mb-1.5">Reply To</label>
+                <input
+                  type="text"
+                  value={replyTo}
+                  onChange={e => setReplyTo(e.target.value)}
                   placeholder="Optional"
                   className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
