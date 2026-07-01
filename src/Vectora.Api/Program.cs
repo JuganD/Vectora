@@ -36,7 +36,7 @@ builder.Services.AddHostedService<EntityCacheWarmupService>();
 
 // MCP server for AI agents; tools are discovered from [McpServerToolType] classes in this assembly.
 builder.Services.AddMcpServer()
-    .WithHttpTransport()
+    .WithHttpTransport(options => options.Stateless = true)
     .WithToolsFromAssembly();
 
 // Configure request body size limit (10MB max)
