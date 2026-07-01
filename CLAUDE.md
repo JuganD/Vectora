@@ -105,7 +105,7 @@ Tools: `list_connections`, `list_entities`, `peek_messages`, `peek_dead_letter_m
 - **Per-connection exposure.** A connection is invisible and unreadable to MCP unless its `ServiceBusConnection.McpExposed` flag is set; `send_message` additionally requires `McpAllowSend`. Both default `false`, so new/production connections are dark until explicitly opted in (added by the `AddMcpConnectionFlags` migration). Flags are set via `PUT /api/connections/{id}/mcp` and the MCP section of the Settings dialog.
 - Read tools clamp results to ≤1000 (default 50) and return a `nextSequenceNumber` cursor for paging.
 
-**Gating & auth.** `McpAuthMiddleware` (runs after `AuthMiddleware`, acts only on `/mcp`) reads two DB-backed settings each request: `McpEnabled` (off → 404, so toggling takes effect with no restart) and `McpApiKey` (when set, requires `Authorization: Bearer <key>`, timing-safe compared; empty → open). This is fully independent of `VECTORA_PASSWORD` — `/mcp` is not under `/api`, so the SPA's JWT layer lets it through. The raw key is never returned by `/api/settings` (only a `mcpApiKeySet` boolean).
+**Gating & auth.** `McpAuthMiddleware` (runs after `AuthMiddleware`, acts only on `/mcp`) reads two DB-backed settings each request: `McpEnabled` (off → 404, so toggling takes effect with no restart) and `McpApiKey` (when set, requires `Authorization: Bearer <key>`, timing-safe compared; empty → open). This is fully independent of `VECTORA_PASSWORD` — `/mcp` is not under `/api`, so the SPA's JWT layer lets it through. `/api/settings` returns the raw `mcpApiKey` so the Settings dialog can display and edit it (empty string means no key); on `PUT`, a null `mcpApiKey` leaves it unchanged and an empty string clears it.
 
 ### Frontend structure
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Settings, Bot, Copy, Check } from "lucide-react";
+import { X, Settings, Bot, Copy, Check, Eye, EyeOff } from "lucide-react";
 import {
   getSettings,
   updateSettings,
@@ -15,9 +15,8 @@ interface SettingsDialogProps {
 export default function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [batchTimeout, setBatchTimeout] = useState("60");
   const [mcpEnabled, setMcpEnabled] = useState(false);
-  const [mcpApiKeySet, setMcpApiKeySet] = useState(false);
   const [mcpApiKey, setMcpApiKey] = useState("");
-  const [clearMcpApiKey, setClearMcpApiKey] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,7 +36,7 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
       ]);
       setBatchTimeout(settings.batchOperationTimeoutSeconds.toString());
       setMcpEnabled(settings.mcpEnabled);
-      setMcpApiKeySet(settings.mcpApiKeySet);
+      setMcpApiKey(settings.mcpApiKey);
       setConnections(conns);
     } catch (error) {
       console.error("Failed to load settings:", error);
@@ -74,11 +73,7 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
       const updated = await updateSettings({
         batchOperationTimeoutSeconds: timeout,
         mcpEnabled,
-        ...(clearMcpApiKey
-          ? { clearMcpApiKey: true }
-          : mcpApiKey
-          ? { mcpApiKey }
-          : {}),
+        mcpApiKey: mcpApiKey.trim(),
       });
       setBatchTimeout(updated.batchOperationTimeoutSeconds.toString());
       onClose();
@@ -195,42 +190,31 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
                     <label className="block text-xs font-medium text-dark-300 mb-1">
                       API Key (optional)
                     </label>
-                    <input
-                      type="password"
-                      value={mcpApiKey}
-                      onChange={(e) => {
-                        setMcpApiKey(e.target.value);
-                        setClearMcpApiKey(false);
-                      }}
-                      className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      placeholder={
-                        mcpApiKeySet && !clearMcpApiKey
-                          ? "•••••••• (configured)"
-                          : "No key — authorization not required"
-                      }
-                    />
+                    <div className="relative">
+                      <input
+                        type={showApiKey ? "text" : "password"}
+                        value={mcpApiKey}
+                        onChange={(e) => setMcpApiKey(e.target.value)}
+                        className="w-full px-3 py-2 pr-10 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="No key — authorization not required"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey((v) => !v)}
+                        className="absolute inset-y-0 right-0 flex items-center px-3 text-dark-400 hover:text-white"
+                        title={showApiKey ? "Hide key" : "Show key"}
+                      >
+                        {showApiKey ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                     <p className="text-xs text-dark-500 mt-1">
                       Agents authorize with{" "}
                       <code className="text-dark-400">Authorization: Bearer &lt;key&gt;</code>.
                       Leave empty for no authorization.
-                      {mcpApiKeySet && !clearMcpApiKey && (
-                        <>
-                          {" "}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setClearMcpApiKey(true);
-                              setMcpApiKey("");
-                            }}
-                            className="text-red-400 hover:text-red-300 underline"
-                          >
-                            Remove key
-                          </button>
-                        </>
-                      )}
-                      {clearMcpApiKey && (
-                        <span className="text-amber-400"> Key will be removed on save.</span>
-                      )}
                     </p>
                   </div>
 

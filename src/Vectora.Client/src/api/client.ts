@@ -190,17 +190,15 @@ export const cancelQueueScheduledBatch = (connectionId: number, queueName: strin
 export interface Settings {
   batchOperationTimeoutSeconds: number;
   mcpEnabled: boolean;
-  // Whether an MCP API key is currently configured. The raw key is never returned by the API.
-  mcpApiKeySet: boolean;
+  // The configured MCP API key; empty string means no key (authorization not required).
+  mcpApiKey: string;
 }
 
 export interface UpdateSettingsRequest {
   batchOperationTimeoutSeconds?: number;
   mcpEnabled?: boolean;
-  // New key to store; omit to leave unchanged.
+  // Key to store; omit to leave unchanged, or pass an empty string to clear it.
   mcpApiKey?: string;
-  // Set true to remove the existing key (no authorization required).
-  clearMcpApiKey?: boolean;
 }
 
 export const getSettings = () => fetchApi<Settings>('/settings');

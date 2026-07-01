@@ -39,12 +39,8 @@ public static class SettingsEndpoints
             await settingsService.SetMcpEnabledAsync(request.McpEnabled.Value);
         }
 
-        // Clearing wins over setting a new value; otherwise only update when a key was supplied.
-        if (request.ClearMcpApiKey)
-        {
-            await settingsService.SetMcpApiKeyAsync(null);
-        }
-        else if (request.McpApiKey != null)
+        // Null leaves the key untouched; any supplied value (including empty, which clears it) is stored.
+        if (request.McpApiKey != null)
         {
             await settingsService.SetMcpApiKeyAsync(request.McpApiKey);
         }
@@ -52,14 +48,14 @@ public static class SettingsEndpoints
         return Results.Ok(await BuildResponseAsync(settingsService));
     }
 
-    // The raw MCP key is never echoed back to the client; only whether one is configured.
     private static async Task<object> BuildResponseAsync(ISettingsService settingsService)
     {
         return new
         {
             batchOperationTimeoutSeconds = await settingsService.GetBatchOperationTimeoutSecondsAsync(),
             mcpEnabled = await settingsService.GetMcpEnabledAsync(),
-            mcpApiKeySet = !string.IsNullOrEmpty(await settingsService.GetMcpApiKeyAsync())
+            // The raw key is returned so the UI can display and edit it; empty string means no key.
+            mcpApiKey = await settingsService.GetMcpApiKeyAsync() ?? string.Empty
         };
     }
 }
