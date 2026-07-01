@@ -34,6 +34,11 @@ builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
 
 builder.Services.AddHostedService<EntityCacheWarmupService>();
 
+// CORS for the MCP endpoint so web-based AI clients can reach it from any origin.
+builder.Services.AddCors(options =>
+    options.AddPolicy("McpCors", policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+
 // MCP server for AI agents; tools are discovered from [McpServerToolType] classes in this assembly.
 builder.Services.AddMcpServer()
     .WithHttpTransport(options => options.Stateless = true)
@@ -69,16 +74,19 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 // 3. Rate limiting for login
 app.UseMiddleware<LoginRateLimitingMiddleware>();
 
-// 4. Serve static files (frontend)
+// 4. CORS (must be before endpoint mapping; policy is scoped to /mcp via RequireCors)
+app.UseCors();
+
+// 5. Serve static files (frontend)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// 5. Authentication middleware
+// 6. Authentication middleware
 app.UseMiddleware<AuthMiddleware>();
 
 // 6. MCP gating (acts only on /mcp; reads enable+key from the DB per request)
 app.UseMiddleware<McpAuthMiddleware>();
-app.MapMcp("/mcp");
+app.MapMcp("/mcp").RequireCors("McpCors");
 
 // Map minimal API endpoints
 app.MapAuthEndpoints();
