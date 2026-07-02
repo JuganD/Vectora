@@ -790,21 +790,49 @@ public class ServiceBusService : IServiceBusService
 
         var adminClient = await GetManagementClientAsync(connection);
         if (adminClient == null) return null;
-        var props = await adminClient.GetQueueAsync(queueName);
-        return new QueuePropertiesDto
+        var props = (await adminClient.GetQueueAsync(queueName)).Value;
+        var dto = new QueuePropertiesDto
         {
-            Name = props.Value.Name,
-            Status = props.Value.Status.ToString(),
-            DefaultMessageTimeToLive = props.Value.DefaultMessageTimeToLive,
-            LockDuration = props.Value.LockDuration,
-            MaxDeliveryCount = props.Value.MaxDeliveryCount,
-            RequiresDuplicateDetection = props.Value.RequiresDuplicateDetection,
-            RequiresSession = props.Value.RequiresSession,
-            DeadLetteringOnMessageExpiration = props.Value.DeadLetteringOnMessageExpiration,
-            ForwardTo = props.Value.ForwardTo,
-            ForwardDeadLetteredMessagesTo = props.Value.ForwardDeadLetteredMessagesTo,
-            MaxSizeInMegabytes = props.Value.MaxSizeInMegabytes
+            Name = props.Name,
+            Status = props.Status.ToString(),
+            DefaultMessageTimeToLive = props.DefaultMessageTimeToLive,
+            LockDuration = props.LockDuration,
+            AutoDeleteOnIdle = props.AutoDeleteOnIdle,
+            DuplicateDetectionHistoryTimeWindow = props.DuplicateDetectionHistoryTimeWindow,
+            MaxDeliveryCount = props.MaxDeliveryCount,
+            RequiresDuplicateDetection = props.RequiresDuplicateDetection,
+            RequiresSession = props.RequiresSession,
+            DeadLetteringOnMessageExpiration = props.DeadLetteringOnMessageExpiration,
+            EnableBatchedOperations = props.EnableBatchedOperations,
+            EnablePartitioning = props.EnablePartitioning,
+            ForwardTo = props.ForwardTo,
+            ForwardDeadLetteredMessagesTo = props.ForwardDeadLetteredMessagesTo,
+            MaxSizeInMegabytes = props.MaxSizeInMegabytes,
+            MaxMessageSizeInKilobytes = props.MaxMessageSizeInKilobytes,
+            UserMetadata = props.UserMetadata
         };
+
+        // Runtime metrics live on a separate admin call; best-effort so a failure here
+        // still returns the configuration above.
+        try
+        {
+            var rt = (await adminClient.GetQueueRuntimePropertiesAsync(queueName)).Value;
+            dto.TotalMessageCount = rt.TotalMessageCount;
+            dto.ActiveMessageCount = rt.ActiveMessageCount;
+            dto.DeadLetterMessageCount = rt.DeadLetterMessageCount;
+            dto.ScheduledMessageCount = rt.ScheduledMessageCount;
+            dto.TransferMessageCount = rt.TransferMessageCount;
+            dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
+            dto.SizeInBytes = rt.SizeInBytes;
+            dto.CreatedAt = rt.CreatedAt;
+            dto.UpdatedAt = rt.UpdatedAt;
+            dto.AccessedAt = rt.AccessedAt;
+        }
+        catch (ServiceBusException)
+        {
+        }
+
+        return dto;
     }
 
     public async Task<TopicPropertiesDto?> GetTopicPropertiesAsync(int connectionId, string topicName)
@@ -814,15 +842,38 @@ public class ServiceBusService : IServiceBusService
 
         var adminClient = await GetManagementClientAsync(connection);
         if (adminClient == null) return null;
-        var props = await adminClient.GetTopicAsync(topicName);
-        return new TopicPropertiesDto
+        var props = (await adminClient.GetTopicAsync(topicName)).Value;
+        var dto = new TopicPropertiesDto
         {
-            Name = props.Value.Name,
-            Status = props.Value.Status.ToString(),
-            DefaultMessageTimeToLive = props.Value.DefaultMessageTimeToLive,
-            RequiresDuplicateDetection = props.Value.RequiresDuplicateDetection,
-            MaxSizeInMegabytes = props.Value.MaxSizeInMegabytes
+            Name = props.Name,
+            Status = props.Status.ToString(),
+            DefaultMessageTimeToLive = props.DefaultMessageTimeToLive,
+            AutoDeleteOnIdle = props.AutoDeleteOnIdle,
+            DuplicateDetectionHistoryTimeWindow = props.DuplicateDetectionHistoryTimeWindow,
+            RequiresDuplicateDetection = props.RequiresDuplicateDetection,
+            EnableBatchedOperations = props.EnableBatchedOperations,
+            EnablePartitioning = props.EnablePartitioning,
+            SupportOrdering = props.SupportOrdering,
+            MaxSizeInMegabytes = props.MaxSizeInMegabytes,
+            MaxMessageSizeInKilobytes = props.MaxMessageSizeInKilobytes,
+            UserMetadata = props.UserMetadata
         };
+
+        try
+        {
+            var rt = (await adminClient.GetTopicRuntimePropertiesAsync(topicName)).Value;
+            dto.SubscriptionCount = rt.SubscriptionCount;
+            dto.ScheduledMessageCount = rt.ScheduledMessageCount;
+            dto.SizeInBytes = rt.SizeInBytes;
+            dto.CreatedAt = rt.CreatedAt;
+            dto.UpdatedAt = rt.UpdatedAt;
+            dto.AccessedAt = rt.AccessedAt;
+        }
+        catch (ServiceBusException)
+        {
+        }
+
+        return dto;
     }
 
     public async Task<SubscriptionPropertiesDto?> GetSubscriptionPropertiesAsync(int connectionId, string topicName, string subscriptionName)
@@ -832,20 +883,106 @@ public class ServiceBusService : IServiceBusService
 
         var adminClient = await GetManagementClientAsync(connection);
         if (adminClient == null) return null;
-        var props = await adminClient.GetSubscriptionAsync(topicName, subscriptionName);
-        return new SubscriptionPropertiesDto
+        var props = (await adminClient.GetSubscriptionAsync(topicName, subscriptionName)).Value;
+        var dto = new SubscriptionPropertiesDto
         {
-            Name = props.Value.SubscriptionName,
-            TopicName = props.Value.TopicName,
-            Status = props.Value.Status.ToString(),
-            DefaultMessageTimeToLive = props.Value.DefaultMessageTimeToLive,
-            LockDuration = props.Value.LockDuration,
-            MaxDeliveryCount = props.Value.MaxDeliveryCount,
-            RequiresSession = props.Value.RequiresSession,
-            DeadLetteringOnMessageExpiration = props.Value.DeadLetteringOnMessageExpiration,
-            ForwardTo = props.Value.ForwardTo,
-            ForwardDeadLetteredMessagesTo = props.Value.ForwardDeadLetteredMessagesTo
+            Name = props.SubscriptionName,
+            TopicName = props.TopicName,
+            Status = props.Status.ToString(),
+            DefaultMessageTimeToLive = props.DefaultMessageTimeToLive,
+            LockDuration = props.LockDuration,
+            AutoDeleteOnIdle = props.AutoDeleteOnIdle,
+            MaxDeliveryCount = props.MaxDeliveryCount,
+            RequiresSession = props.RequiresSession,
+            DeadLetteringOnMessageExpiration = props.DeadLetteringOnMessageExpiration,
+            DeadLetteringOnFilterEvaluationExceptions = props.EnableDeadLetteringOnFilterEvaluationExceptions,
+            EnableBatchedOperations = props.EnableBatchedOperations,
+            ForwardTo = props.ForwardTo,
+            ForwardDeadLetteredMessagesTo = props.ForwardDeadLetteredMessagesTo,
+            UserMetadata = props.UserMetadata
         };
+
+        try
+        {
+            var rt = (await adminClient.GetSubscriptionRuntimePropertiesAsync(topicName, subscriptionName)).Value;
+            dto.TotalMessageCount = rt.TotalMessageCount;
+            dto.ActiveMessageCount = rt.ActiveMessageCount;
+            dto.DeadLetterMessageCount = rt.DeadLetterMessageCount;
+            dto.TransferMessageCount = rt.TransferMessageCount;
+            dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
+            dto.CreatedAt = rt.CreatedAt;
+            dto.UpdatedAt = rt.UpdatedAt;
+            dto.AccessedAt = rt.AccessedAt;
+        }
+        catch (ServiceBusException)
+        {
+        }
+
+        return dto;
+    }
+
+    public async Task<List<SubscriptionRuleDto>?> GetSubscriptionRulesAsync(int connectionId, string topicName, string subscriptionName)
+    {
+        var connection = await _connectionRepository.GetByIdAsync(connectionId);
+        if (connection == null) return null;
+
+        var adminClient = await GetManagementClientAsync(connection);
+        if (adminClient == null) return null;
+
+        var rules = new List<SubscriptionRuleDto>();
+        await foreach (var rule in adminClient.GetRulesAsync(topicName, subscriptionName))
+        {
+            rules.Add(MapRuleToDto(rule));
+        }
+        return rules;
+    }
+
+    private static SubscriptionRuleDto MapRuleToDto(RuleProperties rule)
+    {
+        var dto = new SubscriptionRuleDto { Name = rule.Name };
+
+        // TrueRuleFilter and FalseRuleFilter both derive from SqlRuleFilter, so they must be
+        // matched before the general SqlRuleFilter case.
+        switch (rule.Filter)
+        {
+            case TrueRuleFilter:
+                dto.FilterType = "True";
+                break;
+            case FalseRuleFilter:
+                dto.FilterType = "False";
+                break;
+            case SqlRuleFilter sql:
+                dto.FilterType = "Sql";
+                dto.SqlFilter = sql.SqlExpression;
+                break;
+            case CorrelationRuleFilter cf:
+                dto.FilterType = "Correlation";
+                dto.CorrelationFilter = new CorrelationFilterDto
+                {
+                    CorrelationId = cf.CorrelationId,
+                    MessageId = cf.MessageId,
+                    To = cf.To,
+                    ReplyTo = cf.ReplyTo,
+                    Subject = cf.Subject,
+                    SessionId = cf.SessionId,
+                    ReplyToSessionId = cf.ReplyToSessionId,
+                    ContentType = cf.ContentType,
+                    ApplicationProperties = cf.ApplicationProperties.Count > 0
+                        ? new Dictionary<string, object>(cf.ApplicationProperties)
+                        : null
+                };
+                break;
+            default:
+                dto.FilterType = "Unknown";
+                break;
+        }
+
+        if (rule.Action is SqlRuleAction action)
+        {
+            dto.Action = action.SqlExpression;
+        }
+
+        return dto;
     }
 
     public async Task<bool> CreateQueueAsync(int connectionId, CreateQueueDto dto)

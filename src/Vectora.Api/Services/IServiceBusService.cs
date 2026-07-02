@@ -21,6 +21,7 @@ public interface IServiceBusService
     Task<QueuePropertiesDto?> GetQueuePropertiesAsync(int connectionId, string queueName);
     Task<TopicPropertiesDto?> GetTopicPropertiesAsync(int connectionId, string topicName);
     Task<SubscriptionPropertiesDto?> GetSubscriptionPropertiesAsync(int connectionId, string topicName, string subscriptionName);
+    Task<List<SubscriptionRuleDto>?> GetSubscriptionRulesAsync(int connectionId, string topicName, string subscriptionName);
     Task<bool> CreateQueueAsync(int connectionId, CreateQueueDto dto);
     Task<bool> CreateTopicAsync(int connectionId, CreateTopicDto dto);
     Task<bool> CreateSubscriptionAsync(int connectionId, string topicName, CreateSubscriptionDto dto);

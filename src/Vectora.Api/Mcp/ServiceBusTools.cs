@@ -1,7 +1,7 @@
-using System.ComponentModel;
 using Azure.Messaging.ServiceBus;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
+using System.ComponentModel;
 using Vectora.Api.Models;
 using Vectora.Api.Repositories;
 using Vectora.Api.Services;
@@ -56,6 +56,101 @@ public static class ServiceBusTools
         var (queues, topics, supportsManagement) = result.Value;
         return new { queues, topics, supportsManagement };
     }
+
+    [McpServerTool(Name = "describe_entity")]
+    [Description("Returns the full configuration and runtime metrics of a single queue, topic, or subscription: TTL, lock duration, max delivery count, session/duplicate-detection/partitioning flags, forwarding targets, size limits, plus live counts (active, dead-letter, scheduled, transfer) and timestamps. Provide queueName for a queue, topicName alone for a topic, or topicName+subscriptionName for a subscription. Read-only: nothing is modified. Requires the entity to be on a connection with management support (real Service Bus, or an emulator with a reachable admin API).")]
+    public static async Task<object> DescribeEntityAsync(
+        IConnectionRepository connections,
+        IServiceBusService serviceBus,
+        [Description("The connection id from list_connections.")] int connectionId,
+        [Description("Queue name. Provide this, OR topicName, OR topicName+subscriptionName.")] string? queueName = null,
+        [Description("Topic name. Alone describes the topic; with subscriptionName describes the subscription.")] string? topicName = null,
+        [Description("Subscription name under the topic.")] string? subscriptionName = null)
+    {
+        await EnsureExposedAsync(connections, connectionId);
+
+        if (!string.IsNullOrWhiteSpace(queueName))
+        {
+            var props = await InvokeServiceBusAsync(() => serviceBus.GetQueuePropertiesAsync(connectionId, queueName), queueName);
+            return props ?? throw ManagementUnavailable(queueName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(topicName) && !string.IsNullOrWhiteSpace(subscriptionName))
+        {
+            var label = $"{topicName}/{subscriptionName}";
+            var props = await InvokeServiceBusAsync(() => serviceBus.GetSubscriptionPropertiesAsync(connectionId, topicName, subscriptionName), label);
+            return props ?? throw ManagementUnavailable(label);
+        }
+
+        if (!string.IsNullOrWhiteSpace(topicName))
+        {
+            var props = await InvokeServiceBusAsync(() => serviceBus.GetTopicPropertiesAsync(connectionId, topicName), topicName);
+            return props ?? throw ManagementUnavailable(topicName);
+        }
+
+        throw new McpException("Provide queueName, or topicName, or topicName+subscriptionName.");
+    }
+
+    [McpServerTool(Name = "get_subscription_rules")]
+    [Description("Lists the rules (filters and actions) of a topic subscription, which determine which messages published to the topic are delivered to that subscription. Each rule reports its name, filter type (Sql, Correlation, True, False), the SQL filter expression or matched correlation-filter fields, and any SQL action. Read-only. Requires the connection to have management support.")]
+    public static async Task<object> GetSubscriptionRulesAsync(
+        IConnectionRepository connections,
+        IServiceBusService serviceBus,
+        [Description("The connection id from list_connections.")] int connectionId,
+        [Description("Topic name.")] string topicName,
+        [Description("Subscription name under the topic.")] string subscriptionName)
+    {
+        await EnsureExposedAsync(connections, connectionId);
+
+        if (string.IsNullOrWhiteSpace(topicName) || string.IsNullOrWhiteSpace(subscriptionName))
+        {
+            throw new McpException("Both topicName and subscriptionName are required.");
+        }
+
+        var label = $"{topicName}/{subscriptionName}";
+        var rules = await InvokeServiceBusAsync(() => serviceBus.GetSubscriptionRulesAsync(connectionId, topicName, subscriptionName), label);
+        if (rules == null)
+        {
+            throw ManagementUnavailable(label);
+        }
+
+        return new { rules, count = rules.Count };
+    }
+
+    [McpServerTool(Name = "list_sessions")]
+    [Description("Lists the sessions present in a session-enabled queue or subscription by peeking (read-only, non-destructive) one page of messages and grouping them by session id. Returns each session id with its message count and last-enqueued time. Sessions are never locked or accepted, so this is safe against live consumers. Set deadLetter=true to scan the dead-letter queue. Scans up to 'scanLimit' messages (default 1000, max 1000); if reachedEnd is false, pass the returned lastSequenceNumber + 1 as 'fromSequenceNumber' to continue.")]
+    public static async Task<object> ListSessionsAsync(
+        IConnectionRepository connections,
+        IServiceBusService serviceBus,
+        [Description("The connection id from list_connections.")] int connectionId,
+        [Description("Queue name. Provide this OR topicName+subscriptionName.")] string? queueName = null,
+        [Description("Topic name. Requires subscriptionName.")] string? topicName = null,
+        [Description("Subscription name under the topic.")] string? subscriptionName = null,
+        [Description("Scan the dead-letter queue instead of the active messages.")] bool deadLetter = false,
+        [Description("Max messages to scan in this call (default 1000, max 1000).")] int scanLimit = MaxMessagesCap,
+        [Description("Sequence number to start scanning from, for paging.")] long? fromSequenceNumber = null)
+    {
+        await EnsureExposedAsync(connections, connectionId);
+
+        var (entityPath, subscription) = ResolveReadTarget(queueName, topicName, subscriptionName);
+        var clampedLimit = Math.Clamp(scanLimit, 1, MaxMessagesCap);
+
+        var label = subscription == null ? entityPath : $"{entityPath}/{subscription}";
+        var result = await InvokeServiceBusAsync(
+            () => serviceBus.ScanSessionsAsync(connectionId, entityPath, subscription, deadLetter, fromSequenceNumber, clampedLimit),
+            label);
+        if (result == null)
+        {
+            throw new McpException("Connection not found.");
+        }
+
+        return result;
+    }
+
+    // Management-only operations return null when the connection has no reachable admin API
+    // (e.g. an emulator without the management port); surface that as a clear message.
+    private static McpException ManagementUnavailable(string entityPath)
+        => new($"Entity details for '{entityPath}' are unavailable: this connection does not support entity management (an emulator without a reachable admin API, or the entity was not found).");
 
     // Turns Service Bus SDK failures into McpException so the agent sees a real message
     // (e.g. entity-not-found) instead of the SDK's generic "An error occurred".

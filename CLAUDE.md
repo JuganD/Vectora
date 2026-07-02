@@ -98,7 +98,7 @@ DTOs live in `Models/Dtos/`. `ValidationHelper` enforces entity-name and message
 
 Vectora hosts a built-in MCP server (Model Context Protocol) at `/mcp` so AI agents can browse and test Service Bus. It uses the official `ModelContextProtocol.AspNetCore` SDK over Streamable HTTP, registered in `Program.cs` (`AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp("/mcp")`). Tools are defined in `Mcp/ServiceBusTools.cs` (`[McpServerToolType]` / `[McpServerTool]`) and delegate to the existing `IServiceBusService` and `IConnectionRepository` — no duplicated Service Bus logic.
 
-Tools: `list_connections`, `list_entities`, `peek_messages`, `peek_dead_letter_messages`, `send_message`.
+Tools: `list_connections`, `list_entities`, `describe_entity` (full read-only config + runtime metrics of one queue/topic/subscription), `get_subscription_rules` (subscription filters/actions), `list_sessions` (peek-based, lock-free session listing), `peek_messages`, `peek_dead_letter_messages`, `send_message`. `describe_entity`/`get_subscription_rules` require management support (real Service Bus, or an emulator with a reachable admin API) and go through the existing `IServiceBusService` property/rule methods.
 
 **Safety model (important):**
 - **Reads are peek-only.** The read tools call `PeekMessagesAsync` exclusively, never receive/consume — browsing never locks or removes messages, consistent with the "production reads must be lock-free" rule.
