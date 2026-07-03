@@ -186,7 +186,7 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> ReceiveQueueMessages(int connectionId, string queueName, IServiceBusService serviceBusService, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
+    private static async Task<IResult> ReceiveQueueMessages(int connectionId, string queueName, IServiceBusService serviceBusService, CancellationToken cancellationToken, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
     {
         // Validate input - allow up to 100,000 for consume/purge operations
         var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages, 100000);
@@ -195,15 +195,15 @@ public static class ServiceBusMessageEndpoints
             return Results.BadRequest(new { error });
         }
 
-        var messages = await serviceBusService.ReceiveMessagesAsync(connectionId, queueName, null, maxMessages, deadLetter);
-        if (messages == null)
+        var consumedCount = await serviceBusService.ReceiveMessagesAsync(connectionId, queueName, null, maxMessages, deadLetter, cancellationToken);
+        if (consumedCount == null)
         {
             return Results.NotFound("Connection not found");
         }
-        return Results.Ok(messages);
+        return Results.Ok(new { consumedCount });
     }
 
-    private static async Task<IResult> ReceiveSubscriptionMessages(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
+    private static async Task<IResult> ReceiveSubscriptionMessages(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, CancellationToken cancellationToken, [FromQuery] int maxMessages = 10, [FromQuery] bool deadLetter = false)
     {
         // Validate input - allow up to 100,000 for consume/purge operations
         var (valid, error) = ValidationHelper.ValidateMaxMessages(maxMessages, 100000);
@@ -212,12 +212,12 @@ public static class ServiceBusMessageEndpoints
             return Results.BadRequest(new { error });
         }
 
-        var messages = await serviceBusService.ReceiveMessagesAsync(connectionId, topicName, subscriptionName, maxMessages, deadLetter);
-        if (messages == null)
+        var consumedCount = await serviceBusService.ReceiveMessagesAsync(connectionId, topicName, subscriptionName, maxMessages, deadLetter, cancellationToken);
+        if (consumedCount == null)
         {
             return Results.NotFound("Connection not found");
         }
-        return Results.Ok(messages);
+        return Results.Ok(new { consumedCount });
     }
 
     private static async Task<IResult> SendToQueue(int connectionId, string queueName, SendMessageDto dto, IServiceBusService serviceBusService)
@@ -296,9 +296,9 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(new { processed = count });
     }
 
-    private static async Task<IResult> ReceiveQueueDeadLetterBatch(int connectionId, string queueName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService)
+    private static async Task<IResult> ReceiveQueueDeadLetterBatch(int connectionId, string queueName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService, CancellationToken cancellationToken)
     {
-        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, queueName, null, sequenceNumbers, deadLetter: true);
+        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, queueName, null, sequenceNumbers, deadLetter: true, cancellationToken);
         if (count == null)
         {
             return Results.NotFound("Connection not found");
@@ -306,9 +306,9 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(new { processed = count });
     }
 
-    private static async Task<IResult> ReceiveSubscriptionDeadLetterBatch(int connectionId, string topicName, string subscriptionName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService)
+    private static async Task<IResult> ReceiveSubscriptionDeadLetterBatch(int connectionId, string topicName, string subscriptionName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService, CancellationToken cancellationToken)
     {
-        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, topicName, subscriptionName, sequenceNumbers, deadLetter: true);
+        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, topicName, subscriptionName, sequenceNumbers, deadLetter: true, cancellationToken);
         if (count == null)
         {
             return Results.NotFound("Connection not found");
@@ -316,9 +316,9 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(new { processed = count });
     }
 
-    private static async Task<IResult> DeleteQueueMessagesBatch(int connectionId, string queueName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService)
+    private static async Task<IResult> DeleteQueueMessagesBatch(int connectionId, string queueName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService, CancellationToken cancellationToken)
     {
-        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, queueName, null, sequenceNumbers, deadLetter: false);
+        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, queueName, null, sequenceNumbers, deadLetter: false, cancellationToken);
         if (count == null)
         {
             return Results.NotFound("Connection not found");
@@ -326,9 +326,9 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(new { processed = count });
     }
 
-    private static async Task<IResult> DeleteSubscriptionMessagesBatch(int connectionId, string topicName, string subscriptionName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService)
+    private static async Task<IResult> DeleteSubscriptionMessagesBatch(int connectionId, string topicName, string subscriptionName, [FromBody] long[] sequenceNumbers, IServiceBusService serviceBusService, CancellationToken cancellationToken)
     {
-        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, topicName, subscriptionName, sequenceNumbers, deadLetter: false);
+        var count = await serviceBusService.ReceiveMessagesBySequenceAsync(connectionId, topicName, subscriptionName, sequenceNumbers, deadLetter: false, cancellationToken);
         if (count == null)
         {
             return Results.NotFound("Connection not found");

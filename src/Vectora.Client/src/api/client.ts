@@ -152,9 +152,9 @@ export const peekSubscriptionSessionMessages = (connectionId: number, topicName:
   fetchApi<SessionMessageScanResult>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/sessions/messages?sessionId=${encodeURIComponent(sessionId)}&deadLetter=${deadLetter}&scanLimit=${scanLimit}${fromSequenceNumber != null ? `&fromSequenceNumber=${fromSequenceNumber}` : ''}`);
 
 export const receiveQueueMessages = (connectionId: number, queueName: string, maxMessages = 10, deadLetter = false) =>
-  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
+  fetchApi<{ consumedCount: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
 export const receiveSubscriptionMessages = (connectionId: number, topicName: string, subscriptionName: string, maxMessages = 10, deadLetter = false) =>
-  fetchApi<ServiceBusMessage[]>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
+  fetchApi<{ consumedCount: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
 
 export const sendToQueue = (connectionId: number, queueName: string, message: SendMessageRequest) =>
   fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages`, { method: 'POST', body: JSON.stringify(message) });

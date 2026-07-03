@@ -30,6 +30,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [showConsumePopup, setShowConsumePopup] = useState(false);
   const [consumeCount, setConsumeCount] = useState('10');
   const [clearAll, setClearAll] = useState(false);
+  // Transient feedback banner for consume/delete results (e.g. "Consumed 200 messages").
+  const [actionStatus, setActionStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [detailsTab, setDetailsTab] = useState<'body' | 'properties'>('body');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -321,21 +323,41 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  // Auto-dismiss the action status banner. Errors linger longer than successes.
+  useEffect(() => {
+    if (!actionStatus) return;
+    const timer = setTimeout(() => setActionStatus(null), actionStatus.kind === 'error' ? 8000 : 5000);
+    return () => clearTimeout(timer);
+  }, [actionStatus]);
+
   const handleConsumeSubmit = async () => {
     if (!connection || !selectedEntity) return;
     const count = clearAll ? 10000 : parseInt(consumeCount) || 0;
     if (count <= 0) return;
     setLoading(true);
+    setActionStatus(null);
     closeConsumePopup();
     try {
+      let result: { consumedCount: number } | undefined;
       if (selectedEntity.type === 'queue') {
-        await receiveQueueMessages(connection.id, selectedEntity.name, count, showDeadLetter);
+        result = await receiveQueueMessages(connection.id, selectedEntity.name, count, showDeadLetter);
       } else if (selectedEntity.type === 'subscription' && selectedEntity.topicName) {
-        await receiveSubscriptionMessages(connection.id, selectedEntity.topicName, selectedEntity.name, count, showDeadLetter);
+        result = await receiveSubscriptionMessages(connection.id, selectedEntity.topicName, selectedEntity.name, count, showDeadLetter);
       }
       await refreshAfterAction();
+      const consumed = result?.consumedCount ?? 0;
+      // Report the exact number removed so a partial consume (fewer available, or a cancelled
+      // long run) is visible rather than silent.
+      setActionStatus({
+        kind: 'success',
+        text: clearAll
+          ? `Consumed ${consumed} message${consumed === 1 ? '' : 's'}.`
+          : `Consumed ${consumed} of ${count} requested message${count === 1 ? '' : 's'}.`,
+      });
     } catch (error) {
       console.error('Failed to receive messages:', error);
+      const message = error instanceof Error ? error.message : 'Failed to consume messages.';
+      setActionStatus({ kind: 'error', text: message });
     } finally {
       setLoading(false);
     }
@@ -888,6 +910,19 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         </div>
       )}
 
+      {/* Action result toast (consume / delete counts, errors like a 409 "already in progress") */}
+      {actionStatus && (
+        <div
+          role="status"
+          className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm border ${
+            actionStatus.kind === 'error'
+              ? 'bg-red-900/90 border-red-600 text-red-100'
+              : 'bg-dark-800/95 border-dark-600 text-white'
+          }`}
+        >
+          {actionStatus.text}
+        </div>
+      )}
 
     </div>
   );

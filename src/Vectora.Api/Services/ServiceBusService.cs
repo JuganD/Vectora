@@ -366,53 +366,68 @@ public class ServiceBusService : IServiceBusService
         };
     }
 
-    public async Task<List<ServiceBusMessageDto>?> ReceiveMessagesAsync(int connectionId, string entityPath, string? subscriptionName, int maxMessages, bool deadLetter)
+    // Bulk consume/purge: removes up to maxMessages from the front of the entity (oldest first).
+    // Returns the exact number of messages actually completed (deleted), or null if the connection
+    // is unknown. Guarantees it never deletes more than requested:
+    //   * Each batch requests exactly the outstanding remainder and is completed atomically; the
+    //     cancellation token (RequestAborted) is only checked *between* batches, so a client
+    //     disconnect stops further deletion without half-finishing a batch or overshooting.
+    //   * Messages whose lock is lost mid-complete are not counted and are retried on a later pass.
+    public async Task<int?> ReceiveMessagesAsync(int connectionId, string entityPath, string? subscriptionName, int maxMessages, bool deadLetter, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
+        var subQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None;
         var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
-        ServiceBusReceiver receiver;
-
-        if (subscriptionName != null)
-        {
-            receiver = client.CreateReceiver(entityPath, subscriptionName, new ServiceBusReceiverOptions { SubQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None });
-        }
-        else
-        {
-            receiver = client.CreateReceiver(entityPath, new ServiceBusReceiverOptions { SubQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None });
-        }
+        // PrefetchCount = 0 so the broker never hands us more than we ask for; prefetched-but-unwanted
+        // messages would otherwise have their locks expire and skew the count.
+        var receiverOptions = new ServiceBusReceiverOptions { SubQueue = subQueue, PrefetchCount = 0 };
+        ServiceBusReceiver receiver = subscriptionName != null
+            ? client.CreateReceiver(entityPath, subscriptionName, receiverOptions)
+            : client.CreateReceiver(entityPath, receiverOptions);
 
         await using (receiver)
         {
-            var allMessages = new List<ServiceBusMessageDto>();
+            var consumed = 0;
             var remaining = maxMessages;
             var timeoutSeconds = await _settingsService.GetBatchOperationTimeoutSecondsAsync();
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
 
-            while (remaining > 0 && DateTime.UtcNow < deadline)
+            while (remaining > 0 && DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
             {
                 var batchSize = Math.Min(remaining, 256);
+                // Receive from the front of the entity (FIFO by sequence number): the "first N".
                 var messages = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(5));
 
                 if (messages.Count == 0)
                     break;
 
-                allMessages.AddRange(messages.Select(MapToDto));
-
-                foreach (var msg in messages)
+                // Complete the batch in parallel - a 200-message consume is ~1 round-trip instead of
+                // 200 sequential ones, so it finishes fast enough not to trip a client/proxy timeout.
+                // Count only messages that actually completed; lock-lost ones stay and are retried.
+                var completeResults = await Task.WhenAll(messages.Select(async msg =>
                 {
-                    await receiver.CompleteMessageAsync(msg);
-                }
+                    try
+                    {
+                        await receiver.CompleteMessageAsync(msg);
+                        return true;
+                    }
+                    catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+                    {
+                        return false;
+                    }
+                }));
 
-                remaining -= messages.Count;
+                consumed += completeResults.Count(ok => ok);
+                remaining = maxMessages - consumed;
             }
 
-            return allMessages;
+            return consumed;
         }
     }
 
-    public async Task<int?> ReceiveMessagesBySequenceAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers, bool deadLetter)
+    public async Task<int?> ReceiveMessagesBySequenceAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers, bool deadLetter, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
@@ -436,7 +451,7 @@ public class ServiceBusService : IServiceBusService
             var timeoutSeconds = await _settingsService.GetBatchOperationTimeoutSecondsAsync();
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
 
-            while (sequenceSet.Count > 0 && DateTime.UtcNow < deadline)
+            while (sequenceSet.Count > 0 && DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
             {
                 var received = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(1));
                 if (received.Count == 0)
