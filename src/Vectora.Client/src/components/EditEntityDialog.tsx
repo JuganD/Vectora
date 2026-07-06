@@ -651,8 +651,10 @@ export default function EditEntityDialog({
     }
   };
 
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
+  // Close when a click starts on the backdrop (mousedown, so a drag that
+  // starts inside the dialog and ends outside doesn't close it)
+  const handleBackdropMouseDown = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget && e.button === 0) onClose();
   };
 
   const title =
@@ -665,7 +667,7 @@ export default function EditEntityDialog({
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={handleBackdropClick}
+      onMouseDown={handleBackdropMouseDown}
     >
       <div
         className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"

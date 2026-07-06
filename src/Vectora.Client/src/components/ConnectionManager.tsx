@@ -27,9 +27,10 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Close on backdrop click
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
+  // Close when a click starts on the backdrop (mousedown, so a drag that
+  // starts inside the dialog and ends outside doesn't close it)
+  const handleBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget && e.button === 0) {
       onClose();
     }
   };
@@ -99,7 +100,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={handleBackdropClick}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={handleBackdropMouseDown}>
       <div className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-dark-600">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">

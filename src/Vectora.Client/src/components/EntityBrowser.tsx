@@ -236,15 +236,16 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Close on backdrop click
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
+  // Close when a click starts on the backdrop (mousedown, so a drag that
+  // starts inside the dialog and ends outside doesn't close it)
+  const handleBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget && e.button === 0) {
       closeCreateDialog();
     }
   };
 
-  const handleDeleteBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
+  const handleDeleteBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget && e.button === 0) {
       closeDeleteDialog();
     }
   };
@@ -380,7 +381,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
 
       {/* Create Entity Dialog */}
       {createMode && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={handleBackdropClick}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={handleBackdropMouseDown}>
           <div className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm p-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-white">
@@ -435,7 +436,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
 
       {/* Delete Confirmation Dialog */}
       {deleteTarget && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={handleDeleteBackdropClick}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={handleDeleteBackdropMouseDown}>
           <div className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm p-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-white">

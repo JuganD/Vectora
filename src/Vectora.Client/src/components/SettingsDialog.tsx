@@ -97,7 +97,7 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => e.target === e.currentTarget && e.button === 0 && onClose()}
     >
       <div
         className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-lg p-4 max-h-[90vh] overflow-y-auto"

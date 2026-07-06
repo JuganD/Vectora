@@ -226,9 +226,10 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Close on backdrop click
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
+  // Close when a click starts on the backdrop (mousedown, so a drag that
+  // starts inside the dialog and ends outside doesn't close it)
+  const handleBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget && e.button === 0) {
       onClose();
     }
   };
@@ -315,7 +316,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-0 md:p-3" onClick={handleBackdropClick}>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-0 md:p-3" onMouseDown={handleBackdropMouseDown}>
       <div className="bg-dark-800 border border-dark-600 md:rounded-xl w-full h-full md:max-w-[95vw] md:h-[95vh] flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Header Toolbar with carbon fiber pattern */}
         <div className="relative shrink-0 border-b border-dark-600">
@@ -600,7 +601,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       {showLoadModal && (
         <div
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
-          onClick={() => { setShowLoadModal(false); setTemplateSearch(''); }}
+          onMouseDown={e => { if (e.target === e.currentTarget && e.button === 0) { setShowLoadModal(false); setTemplateSearch(''); } }}
         >
           <div
             className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-md mx-4 flex flex-col shadow-2xl max-h-[70vh] overflow-hidden"
@@ -673,7 +674,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       {showSaveDialog && (
         <div
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]"
-          onClick={() => { setShowSaveDialog(false); setTemplateName(''); }}
+          onMouseDown={e => { if (e.target === e.currentTarget && e.button === 0) { setShowSaveDialog(false); setTemplateName(''); } }}
         >
           <div
             className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm mx-4 shadow-2xl overflow-hidden"

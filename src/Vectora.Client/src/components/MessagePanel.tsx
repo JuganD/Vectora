@@ -863,7 +863,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
       {/* Consume Popup */}
       {showConsumePopup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={e => e.target === e.currentTarget && closeConsumePopup()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onMouseDown={e => e.target === e.currentTarget && e.button === 0 && closeConsumePopup()}>
           <div className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm p-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-white">Consume Messages</h3>

@@ -134,7 +134,7 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
       {open && (
         <div
           className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4"
-          onClick={() => setOpen(false)}
+          onMouseDown={e => e.target === e.currentTarget && e.button === 0 && setOpen(false)}
         >
         <div
           className="w-full max-w-[340px] bg-dark-800 border border-dark-600 rounded-xl shadow-2xl p-4 select-none"
