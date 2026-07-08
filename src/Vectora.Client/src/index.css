@@ -55,6 +55,16 @@ html, body {
   border-radius: 0.5rem;
 }
 
+/* The find widget sits at the top of the editor, so Monaco's button tooltips
+   (e.g. "Close (Escape)", "Find in Selection") render on top of their own
+   trigger button. That overlap causes a mouseenter/mouseleave feedback loop
+   that flickers the tooltip endlessly and makes the buttons hard to click.
+   Hiding these widget hovers removes the flicker (the buttons still have their
+   aria-labels for accessibility). */
+.monaco-hover.workbench-hover {
+  display: none !important;
+}
+
 /* Custom animations */
 @keyframes fadeIn {
   from { opacity: 0; }
