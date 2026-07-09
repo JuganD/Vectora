@@ -79,6 +79,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingAll, setLoadingAll] = useState(false);
   const loadAllRef = useRef(false);
+  const loadAllRunIdRef = useRef(0);
   const messagesRef = useRef<ServiceBusMessage[]>([]);
   const hasMoreRef = useRef(true);
   // Client-side windowing: only render this many rows at a time and grow on scroll, so a huge
@@ -186,12 +187,13 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // message. Guarded by a ref so scroll paging / repeated triggers can't run it concurrently.
   const loadAllRemaining = useCallback(async () => {
     if (!connection || !selectedEntity || loadAllRef.current) return;
+    const runId = ++loadAllRunIdRef.current;
     loadAllRef.current = true;
     setLoadingAll(true);
     try {
       let current = messagesRef.current;
       let more = hasMoreRef.current;
-      while (more) {
+      while (more && loadAllRunIdRef.current === runId) {
         const last = current.length > 0 ? current[current.length - 1].sequenceNumber : undefined;
         const from = last != null ? last + 1 : undefined;
         let batch: ServiceBusMessage[];
@@ -202,6 +204,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         } else {
           break;
         }
+        if (loadAllRunIdRef.current !== runId) break;
         if (batch.length > 0) {
           current = [...current, ...batch];
           setMessages(current);
@@ -212,8 +215,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     } catch (error) {
       console.error('Failed to load all messages for search:', error);
     } finally {
-      loadAllRef.current = false;
-      setLoadingAll(false);
+      if (loadAllRunIdRef.current === runId) {
+        loadAllRef.current = false;
+        setLoadingAll(false);
+      }
     }
   }, [connection, selectedEntity, showDeadLetter]);
 
@@ -375,6 +380,9 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   useEffect(() => {
     // Any change to the entity, connection, DLQ flag, or session toggle drops back to the
     // session list (if in session view) or the flat message list, and clears selections.
+    loadAllRunIdRef.current += 1;
+    loadAllRef.current = false;
+    setLoadingAll(false);
     setSelectedSession(null);
     setSelectedMessage(null);
     setSelectedMessages(new Set());
@@ -1239,4 +1247,3 @@ function MessageListItem({ message, isSelected, isChecked, selectMode, onClick, 
     </div>
   );
 }
-
