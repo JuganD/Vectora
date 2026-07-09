@@ -292,12 +292,10 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     };
 
     try {
-      const sendFn = entity.type === 'queue'
-        ? () => sendToQueue(connection.id, entity.name, message)
-        : () => sendToTopic(connection.id, entity.name, message);
-
-      for (let i = 0; i < count; i++) {
-        await sendFn();
+      if (entity.type === 'queue') {
+        await sendToQueue(connection.id, entity.name, message, count);
+      } else {
+        await sendToTopic(connection.id, entity.name, message, count);
       }
       onClose();
     } catch (err) {

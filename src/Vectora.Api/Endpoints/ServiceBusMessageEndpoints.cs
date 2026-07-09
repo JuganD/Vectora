@@ -220,7 +220,7 @@ public static class ServiceBusMessageEndpoints
         return Results.Ok(new { consumedCount });
     }
 
-    private static async Task<IResult> SendToQueue(int connectionId, string queueName, SendMessageDto dto, IServiceBusService serviceBusService)
+    private static async Task<IResult> SendToQueue(int connectionId, string queueName, SendMessageDto dto, IServiceBusService serviceBusService, [FromQuery] int count = 1)
     {
         // Validate input
         var (valid, error) = ValidationHelper.ValidateMessageBody(dto.Body);
@@ -228,16 +228,21 @@ public static class ServiceBusMessageEndpoints
         {
             return Results.BadRequest(new { error });
         }
-
-        var success = await serviceBusService.SendMessageAsync(connectionId, queueName, dto);
-        if (success)
+        var (countValid, countError) = ValidationHelper.ValidateSendCount(count);
+        if (!countValid)
         {
-            return Results.Ok();
+            return Results.BadRequest(new { error = countError });
         }
-        return Results.NotFound("Connection not found");
+
+        var sentCount = await serviceBusService.SendMessagesAsync(connectionId, queueName, dto, count);
+        if (sentCount == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(new { sentCount });
     }
 
-    private static async Task<IResult> SendToTopic(int connectionId, string topicName, SendMessageDto dto, IServiceBusService serviceBusService)
+    private static async Task<IResult> SendToTopic(int connectionId, string topicName, SendMessageDto dto, IServiceBusService serviceBusService, [FromQuery] int count = 1)
     {
         // Validate input
         var (valid, error) = ValidationHelper.ValidateMessageBody(dto.Body);
@@ -245,13 +250,18 @@ public static class ServiceBusMessageEndpoints
         {
             return Results.BadRequest(new { error });
         }
-
-        var success = await serviceBusService.SendMessageAsync(connectionId, topicName, dto);
-        if (success)
+        var (countValid, countError) = ValidationHelper.ValidateSendCount(count);
+        if (!countValid)
         {
-            return Results.Ok();
+            return Results.BadRequest(new { error = countError });
         }
-        return Results.NotFound("Connection not found");
+
+        var sentCount = await serviceBusService.SendMessagesAsync(connectionId, topicName, dto, count);
+        if (sentCount == null)
+        {
+            return Results.NotFound("Connection not found");
+        }
+        return Results.Ok(new { sentCount });
     }
 
     private static async Task<IResult> ReturnQueueDeadLetter(int connectionId, string queueName, long sequenceNumber, [FromBody] SendMessageDto? modifiedMessage, IServiceBusService serviceBusService, [FromQuery] bool deleteOriginal = true)

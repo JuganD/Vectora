@@ -532,6 +532,40 @@ public class ServiceBusService : IServiceBusService
         return true;
     }
 
+    // Sends `count` identical copies of the message, packed into as few AMQP transfers as
+    // possible via ServiceBusMessageBatch. Returns the number of messages sent, or null when
+    // the connection is unknown.
+    public async Task<int?> SendMessagesAsync(int connectionId, string entityPath, SendMessageDto dto, int count)
+    {
+        var connection = await _connectionRepository.GetByIdAsync(connectionId);
+        if (connection == null) return null;
+
+        var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+        await using var sender = client.CreateSender(entityPath);
+
+        var sent = 0;
+        while (sent < count)
+        {
+            using var batch = await sender.CreateMessageBatchAsync();
+            // Always place at least one message in the batch; if a single message doesn't fit,
+            // fall back to sending it on its own so we never loop forever.
+            if (!batch.TryAddMessage(CreateServiceBusMessage(dto)))
+            {
+                await sender.SendMessageAsync(CreateServiceBusMessage(dto));
+                sent++;
+                continue;
+            }
+            var batchCount = 1;
+            while (sent + batchCount < count && batch.TryAddMessage(CreateServiceBusMessage(dto)))
+            {
+                batchCount++;
+            }
+            await sender.SendMessagesAsync(batch);
+            sent += batchCount;
+        }
+        return sent;
+    }
+
     private static ServiceBusMessage CreateServiceBusMessage(SendMessageDto dto)
     {
         var message = new ServiceBusMessage(dto.Body)

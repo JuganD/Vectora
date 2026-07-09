@@ -147,6 +147,19 @@ public static partial class ValidationHelper
         return (true, null);
     }
 
+    /// <summary>
+    /// Validates the "send multiple times" count.
+    /// </summary>
+    public static (bool IsValid, string? Error) ValidateSendCount(int count, int maxLimit = 100000)
+    {
+        if (count < 1 || count > maxLimit)
+        {
+            return (false, $"Count must be between 1 and {maxLimit}");
+        }
+
+        return (true, null);
+    }
+
     [GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial Regex EntityNameRegex();
 }

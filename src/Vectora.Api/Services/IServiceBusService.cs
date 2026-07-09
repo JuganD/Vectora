@@ -14,6 +14,7 @@ public interface IServiceBusService
     Task<int?> ReceiveMessagesBySequenceAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers, bool deadLetter, CancellationToken cancellationToken = default);
     Task<int?> CancelScheduledMessagesAsync(int connectionId, string entityPath, IEnumerable<long> sequenceNumbers);
     Task<bool> SendMessageAsync(int connectionId, string entityPath, SendMessageDto message);
+    Task<int?> SendMessagesAsync(int connectionId, string entityPath, SendMessageDto message, int count);
     Task<bool?> ReturnDeadLetterMessageAsync(int connectionId, string entityPath, string? subscriptionName, long sequenceNumber, SendMessageDto? modifiedMessage, bool deleteOriginal);
     Task<int?> ReturnDeadLetterMessagesAsync(int connectionId, string entityPath, string? subscriptionName, IEnumerable<long> sequenceNumbers);
 

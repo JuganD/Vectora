@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo } from '../types';
 import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
 import MessageViewer from './MessageViewer';
@@ -13,6 +13,40 @@ interface MessagePanelProps {
   onUpdateEntityCount?: (entity: SelectedEntity) => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
+}
+
+// Case-insensitive substring match across a message's searchable fields, including its
+// application properties. `q` must already be trimmed and lower-cased.
+function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
+  const fields = [
+    m.body,
+    m.subject,
+    m.messageId,
+    m.correlationId,
+    m.sessionId,
+    m.to,
+    m.replyTo,
+    m.deadLetterReason,
+    m.deadLetterErrorDescription,
+    m.deadLetterSource,
+    String(m.sequenceNumber),
+  ];
+  for (const f of fields) {
+    if (f && f.toLowerCase().includes(q)) {
+      return true;
+    }
+  }
+  if (m.applicationProperties) {
+    for (const [key, value] of Object.entries(m.applicationProperties)) {
+      if (key.toLowerCase().includes(q)) {
+        return true;
+      }
+      if (value != null && String(value).toLowerCase().includes(q)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar }: MessagePanelProps) {
@@ -36,6 +70,21 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [detailsTab, setDetailsTab] = useState<'body' | 'properties'>('body');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Client-side search over the flat message list. When a query is entered we keep peeking
+  // pages until the entity is exhausted, then filter the already-loaded messages locally, so
+  // the user can search without ever re-fetching. Peek-only, so it never locks/removes anything.
+  // `searchInput` tracks the raw text box for instant typing; `searchQuery` is the debounced
+  // value that actually drives filtering, so keystrokes don't re-filter/re-render a huge list.
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loadingAll, setLoadingAll] = useState(false);
+  const loadAllRef = useRef(false);
+  const messagesRef = useRef<ServiceBusMessage[]>([]);
+  const hasMoreRef = useRef(true);
+  // Client-side windowing: only render this many rows at a time and grow on scroll, so a huge
+  // result set (e.g. thousands of matches) never builds thousands of DOM nodes at once.
+  const [visibleCount, setVisibleCount] = useState(50);
+
   // Session view: browse messages grouped by session id. Everything here is peek-only
   // (read-only) and pages through the entity by sequence number, so it never locks a
   // session or disrupts live consumers.
@@ -56,8 +105,11 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [sessionMsgScannedTotal, setSessionMsgScannedTotal] = useState(0);
 
   const PAGE_SIZE = 50;
+  // How many additional rows to reveal each time the window grows (scroll / keyboard / button).
+  const WINDOW_STEP = 300;
   const SESSION_SCAN_LIMIT = 1000;
-
+  // Larger chunk used when eagerly draining the entity for a search (backend caps peek at 1000).
+  const SEARCH_PAGE_SIZE = 500;
   const getEntityInfo = () => {
     if (!selectedEntity) return null;
     if (selectedEntity.type === 'queue') {
@@ -102,7 +154,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   };
 
   const loadMoreMessages = async () => {
-    if (!connection || !selectedEntity || loadingMore || !hasMore || messages.length === 0) return;
+    if (!connection || !selectedEntity || loadingMore || loadingAll || !hasMore || messages.length === 0) return;
     setLoadingMore(true);
     try {
       const lastSequenceNumber = messages[messages.length - 1].sequenceNumber;
@@ -124,6 +176,85 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       setLoadingMore(false);
     }
   };
+
+  // Keep refs in sync so the search drain loop can read the latest list/hasMore without
+  // being recreated on every append.
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+
+  // Eagerly peek pages until the entity is drained, so a client-side search covers every
+  // message. Guarded by a ref so scroll paging / repeated triggers can't run it concurrently.
+  const loadAllRemaining = useCallback(async () => {
+    if (!connection || !selectedEntity || loadAllRef.current) return;
+    loadAllRef.current = true;
+    setLoadingAll(true);
+    try {
+      let current = messagesRef.current;
+      let more = hasMoreRef.current;
+      while (more) {
+        const last = current.length > 0 ? current[current.length - 1].sequenceNumber : undefined;
+        const from = last != null ? last + 1 : undefined;
+        let batch: ServiceBusMessage[];
+        if (selectedEntity.type === 'queue') {
+          batch = await peekQueueMessages(connection.id, selectedEntity.name, SEARCH_PAGE_SIZE, showDeadLetter, from);
+        } else if (selectedEntity.type === 'subscription' && selectedEntity.topicName) {
+          batch = await peekSubscriptionMessages(connection.id, selectedEntity.topicName, selectedEntity.name, SEARCH_PAGE_SIZE, showDeadLetter, from);
+        } else {
+          break;
+        }
+        if (batch.length > 0) {
+          current = [...current, ...batch];
+          setMessages(current);
+        }
+        more = batch.length === SEARCH_PAGE_SIZE;
+        setHasMore(more);
+      }
+    } catch (error) {
+      console.error('Failed to load all messages for search:', error);
+    } finally {
+      loadAllRef.current = false;
+      setLoadingAll(false);
+    }
+  }, [connection, selectedEntity, showDeadLetter]);
+
+  // Debounce the raw text box into the query that drives filtering/draining, so typing stays
+  // responsive even with tens of thousands of loaded messages.
+  useEffect(() => {
+    if (searchInput === searchQuery) return;
+    const timer = setTimeout(() => setSearchQuery(searchInput), 200);
+    return () => clearTimeout(timer);
+  }, [searchInput, searchQuery]);
+
+  // When a search is active and the flat list isn't fully loaded, drain the rest so the
+  // search runs against the whole entity.
+  useEffect(() => {
+    if (searchQuery.trim() && hasMore && !sessionView && !loadAllRef.current) {
+      loadAllRemaining();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, hasMore, sessionView]);
+
+  // Messages shown in the flat list, narrowed by the current search query.
+  const filteredMessages = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return messages;
+    return messages.filter(m => messageMatchesSearch(m, q));
+  }, [messages, searchQuery]);
+
+  // The flat list uses the filtered view; a drilled-in session reuses `messages` untouched.
+  const listMessages = inSessionMessages ? messages : filteredMessages;
+
+  // Only the first `visibleCount` rows are actually rendered; scrolling grows the window.
+  const visibleMessages = useMemo(() => listMessages.slice(0, visibleCount), [listMessages, visibleCount]);
+  const hasHiddenRows = visibleCount < listMessages.length;
+
+  // Collapse the window back to one page whenever the result set is conceptually replaced
+  // (new query, entity, DLQ toggle, or session context) so we never start by rendering a
+  // stale, huge slice. Streaming appends during a drain keep the user's grown window intact.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [searchQuery, connection, selectedEntity, showDeadLetter, sessionView, selectedSession]);
+
 
   // Peek one page of messages and fold the per-session counts into the running list.
   // `reset` starts a fresh scan; otherwise it continues from the last sequence number.
@@ -226,12 +357,20 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
-    if (!container || loadingMore || !hasMore) return;
+    if (!container) return;
     const { scrollTop, scrollHeight, clientHeight } = container;
-    if (scrollHeight - scrollTop - clientHeight < 200) {
+    if (scrollHeight - scrollTop - clientHeight >= 200) return;
+
+    // Reveal more already-loaded rows first (client-side windowing).
+    if (hasHiddenRows) {
+      setVisibleCount(c => Math.min(listMessages.length, c + WINDOW_STEP));
+      return;
+    }
+    // Everything loaded is now shown; in non-search mode fetch the next server page.
+    if (!searchQuery.trim() && !loadingMore && !loadingAll && hasMore) {
       loadMoreMessages();
     }
-  }, [loadingMore, hasMore, messages]);
+  }, [hasHiddenRows, listMessages.length, searchQuery, loadingMore, loadingAll, hasMore]);
 
   useEffect(() => {
     // Any change to the entity, connection, DLQ flag, or session toggle drops back to the
@@ -239,6 +378,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     setSelectedSession(null);
     setSelectedMessage(null);
     setSelectedMessages(new Set());
+    setSearchInput('');
+    setSearchQuery('');
     if (!connection || !selectedEntity) {
       setMessages([]);
       setSessions([]);
@@ -261,7 +402,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle if not in select mode and we have messages
-      if (selectMode || messages.length === 0) return;
+      if (selectMode || visibleMessages.length === 0) return;
 
       // Don't handle if focus is in an input, textarea, or the editor
       const activeElement = document.activeElement;
@@ -272,18 +413,24 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         e.preventDefault();
 
         const currentIndex = selectedMessage
-          ? messages.findIndex(m => m.sequenceNumber === selectedMessage.sequenceNumber)
+          ? visibleMessages.findIndex(m => m.sequenceNumber === selectedMessage.sequenceNumber)
           : -1;
+
+        // At the bottom of the rendered window with more rows available, reveal the next page.
+        if (e.key === 'ArrowDown' && currentIndex === visibleMessages.length - 1 && hasHiddenRows) {
+          setVisibleCount(c => Math.min(listMessages.length, c + WINDOW_STEP));
+          return;
+        }
 
         let newIndex: number;
         if (e.key === 'ArrowDown') {
-          newIndex = currentIndex < messages.length - 1 ? currentIndex + 1 : currentIndex;
+          newIndex = currentIndex < visibleMessages.length - 1 ? currentIndex + 1 : currentIndex;
         } else {
           newIndex = currentIndex > 0 ? currentIndex - 1 : (currentIndex === -1 ? 0 : currentIndex);
         }
 
-        if (newIndex !== currentIndex && newIndex >= 0 && newIndex < messages.length) {
-          setSelectedMessage(messages[newIndex]);
+        if (newIndex !== currentIndex && newIndex >= 0 && newIndex < visibleMessages.length) {
+          setSelectedMessage(visibleMessages[newIndex]);
 
           // Scroll the message into view
           const messageElements = scrollContainerRef.current?.querySelectorAll('[data-message-item]');
@@ -296,7 +443,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [messages, selectedMessage, selectMode]);
+  }, [visibleMessages, selectedMessage, selectMode, hasHiddenRows, listMessages.length]);
 
   const refreshAfterAction = async () => {
     await loadMessages();
@@ -423,10 +570,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   };
 
   const toggleSelectAll = () => {
-    if (selectedMessages.size === messages.length) {
+    if (selectedMessages.size === filteredMessages.length) {
       setSelectedMessages(new Set());
     } else {
-      setSelectedMessages(new Set(messages.map(m => m.sequenceNumber)));
+      setSelectedMessages(new Set(filteredMessages.map(m => m.sequenceNumber)));
     }
   };
 
@@ -483,6 +630,30 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       case 'subscription': return <Users className="w-5 h-5" />;
     }
   };
+
+  // Precompute the message rows for the visible window only. Deliberately excludes
+  // `searchInput` from the deps so typing (which only updates the text box) never rebuilds
+  // rows; windowing keeps this to ~one page regardless of how many messages match.
+  const messageItems = useMemo(() => visibleMessages.map(msg => (
+    <MessageListItem
+      key={msg.sequenceNumber}
+      message={msg}
+      isSelected={selectedMessage?.sequenceNumber === msg.sequenceNumber}
+      isChecked={selectedMessages.has(msg.sequenceNumber)}
+      selectMode={!inSessionMessages && selectMode}
+      onClick={() => {
+        if (!inSessionMessages && selectMode) {
+          toggleMessageSelection(msg.sequenceNumber);
+        } else {
+          setSelectedMessage(msg);
+          if (isMobile) setMobileView('detail');
+        }
+      }}
+      showDeadLetter={!inSessionMessages && showDeadLetter}
+      onReturn={() => handleReturnToQueue(msg)}
+    />
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  )), [visibleMessages, selectedMessage, selectedMessages, selectMode, inSessionMessages, showDeadLetter, isMobile]);
 
   if (!connection || !selectedEntity) {
     return (
@@ -730,17 +901,40 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                 </div>
               ) : (
                 messages.length > 0 && (
-                  <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between">
-                    <span className="text-sm text-dark-400">
-                      {selectMode && selectedMessages.size > 0 ? `${selectedMessages.size} selected` : `${messages.length} messages`}
+                  <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between gap-2">
+                    <span className="text-sm text-dark-400 flex-shrink-0">
+                      {selectMode && selectedMessages.size > 0
+                        ? `${selectedMessages.size} selected`
+                        : searchQuery.trim()
+                          ? `${filteredMessages.length.toLocaleString()} / ${messages.length.toLocaleString()}${loadingAll ? '+' : ''}`
+                          : `${messages.length} messages`}
                     </span>
-                    <div className="flex items-center gap-2">
+                    <div className="relative flex-1 min-w-0 max-w-xs mx-auto">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dark-500 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        placeholder="Search messages…"
+                        className="w-full pl-7 pr-7 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                      />
+                      {searchInput && (
+                        <button
+                          onClick={() => { setSearchInput(''); setSearchQuery(''); }}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
+                          title="Clear search"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       {selectMode && (
                         <button
                           onClick={toggleSelectAll}
                           className="text-xs px-2 py-1 text-primary-400 hover:text-primary-300 hover:bg-dark-600 rounded transition-colors"
                         >
-                          {selectedMessages.size === messages.length ? 'Deselect All' : 'Select All'}
+                          {selectedMessages.size === filteredMessages.length ? 'Deselect All' : 'Select All'}
                         </button>
                       )}
                       <button
@@ -762,35 +956,38 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                   <div className="flex items-center justify-center py-8 text-dark-500"><p>Loading...</p></div>
                 ) : (
                   <>
-                    {messages.length === 0 ? (
-                      <div className="flex items-center justify-center py-8 text-dark-500"><p>{inSessionMessages ? 'No messages for this session in the scanned window' : 'No messages found'}</p></div>
+                    {listMessages.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 text-dark-500 gap-1">
+                        <p>
+                          {inSessionMessages
+                            ? 'No messages for this session in the scanned window'
+                            : searchQuery.trim()
+                              ? `No messages match “${searchQuery.trim()}”`
+                              : 'No messages found'}
+                        </p>
+                        {!inSessionMessages && searchQuery.trim() && loadingAll && (
+                          <p className="text-xs text-dark-400 animate-pulse">Loading remaining messages…</p>
+                        )}
+                      </div>
                     ) : (
                       <div className="divide-y divide-dark-700">
-                        {messages.map(msg => (
-                          <MessageListItem
-                            key={msg.sequenceNumber}
-                            message={msg}
-                            isSelected={selectedMessage?.sequenceNumber === msg.sequenceNumber}
-                            isChecked={selectedMessages.has(msg.sequenceNumber)}
-                            selectMode={!inSessionMessages && selectMode}
-                            onClick={() => {
-                              if (!inSessionMessages && selectMode) {
-                                toggleMessageSelection(msg.sequenceNumber);
-                              } else {
-                                setSelectedMessage(msg);
-                                if (isMobile) setMobileView('detail');
-                              }
-                            }}
-                            showDeadLetter={!inSessionMessages && showDeadLetter}
-                            onReturn={() => handleReturnToQueue(msg)}
-                          />
-                        ))}
-                        {!inSessionMessages && loadingMore && (
+                        {messageItems}
+                        {!inSessionMessages && searchQuery.trim() && loadingAll && (
+                          <div className="flex items-center justify-center py-4 text-dark-400">
+                            <div className="animate-pulse">Searching all messages…</div>
+                          </div>
+                        )}
+                        {!inSessionMessages && hasHiddenRows && (
+                          <div className="flex items-center justify-center py-3 text-xs text-dark-500">
+                            Showing {visibleMessages.length.toLocaleString()} of {listMessages.length.toLocaleString()}
+                          </div>
+                        )}
+                        {!inSessionMessages && !searchQuery.trim() && !hasHiddenRows && loadingMore && (
                           <div className="flex items-center justify-center py-4 text-dark-400">
                             <div className="animate-pulse">Loading more...</div>
                           </div>
                         )}
-                        {!inSessionMessages && !hasMore && messages.length > 0 && (
+                        {!inSessionMessages && !searchQuery.trim() && !hasHiddenRows && !hasMore && messages.length > 0 && (
                           <div className="flex items-center justify-center py-4 text-dark-500 text-sm">
                             No more messages
                           </div>

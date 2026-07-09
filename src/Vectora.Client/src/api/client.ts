@@ -156,10 +156,10 @@ export const receiveQueueMessages = (connectionId: number, queueName: string, ma
 export const receiveSubscriptionMessages = (connectionId: number, topicName: string, subscriptionName: string, maxMessages = 10, deadLetter = false) =>
   fetchApi<{ consumedCount: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/messages/receive?maxMessages=${maxMessages}&deadLetter=${deadLetter}`, { method: 'POST' });
 
-export const sendToQueue = (connectionId: number, queueName: string, message: SendMessageRequest) =>
-  fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages`, { method: 'POST', body: JSON.stringify(message) });
-export const sendToTopic = (connectionId: number, topicName: string, message: SendMessageRequest) =>
-  fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/messages`, { method: 'POST', body: JSON.stringify(message) });
+export const sendToQueue = (connectionId: number, queueName: string, message: SendMessageRequest, count = 1) =>
+  fetchApi<{ sentCount: number }>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/messages?count=${count}`, { method: 'POST', body: JSON.stringify(message) });
+export const sendToTopic = (connectionId: number, topicName: string, message: SendMessageRequest, count = 1) =>
+  fetchApi<{ sentCount: number }>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/messages?count=${count}`, { method: 'POST', body: JSON.stringify(message) });
 
 export const returnQueueDeadLetter = (connectionId: number, queueName: string, sequenceNumber: number, message?: SendMessageRequest, deleteOriginal = true) =>
   fetchApi<void>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/deadletter/${sequenceNumber}/return?deleteOriginal=${deleteOriginal}`, { method: 'POST', body: JSON.stringify(message ?? null) });
