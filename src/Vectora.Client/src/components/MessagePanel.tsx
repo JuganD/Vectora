@@ -959,7 +959,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               ) : (
                 messages.length > 0 && (
                   <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between gap-2">
-                    <span className="text-sm text-dark-400 flex-shrink-0">
+                    <span className="text-sm text-dark-400 flex-shrink-0 min-w-[100px]">
                       {selectMode && selectedMessages.size > 0
                         ? `${selectedMessages.size} selected`
                         : searchQuery.trim()
