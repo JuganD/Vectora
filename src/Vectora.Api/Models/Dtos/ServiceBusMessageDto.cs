@@ -26,4 +26,7 @@ public class ServiceBusMessageDto
     // For dead-lettered messages: the entity that dead-lettered the message.
     public string? DeadLetterSource { get; set; }
     public Dictionary<string, object>? ApplicationProperties { get; set; }
+    // CLR type name of each application property ("string", "int", "long", ...) so the UI
+    // can round-trip the original types when a message is used as a send template.
+    public Dictionary<string, string>? ApplicationPropertyTypes { get; set; }
 }

@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Vectora.Api.Models;
 
 public class SendMessageDto
@@ -13,5 +15,7 @@ public class SendMessageDto
     public string? To { get; set; }
     public DateTimeOffset? ScheduledEnqueueTime { get; set; }
     public TimeSpan? TimeToLive { get; set; }
-    public Dictionary<string, string>? ApplicationProperties { get; set; }
+    // Each value is either a bare JSON value (string/number/bool) or a { value, type } object
+    // for an explicit type — see ApplicationPropertyConverter for the supported type names.
+    public Dictionary<string, JsonElement>? ApplicationProperties { get; set; }
 }

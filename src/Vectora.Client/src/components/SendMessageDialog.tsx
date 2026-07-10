@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Send, Plus, Trash2, Wand2, GripVertical, Save, FolderOpen, Search, Clock } from 'lucide-react';
 import Editor from '@monaco-editor/react';
-import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage, MessageTemplate } from '../types';
+import type { Connection, SelectedEntity, SendMessageRequest, ServiceBusMessage, MessageTemplate, ApplicationPropertyType } from '../types';
+import { APPLICATION_PROPERTY_TYPES } from '../types';
 import { sendToQueue, sendToTopic, getMessageTemplates, saveMessageTemplate, deleteMessageTemplate } from '../api/client';
 import DateTimePicker from './DateTimePicker';
 
@@ -19,6 +20,12 @@ function useIsMobile() {
 const LAST_MESSAGE_KEY = 'vectora_last_message';
 const PANEL_RATIO_KEY = 'vectora_send_panel_ratio';
 
+interface PropertyRow {
+  key: string;
+  value: string;
+  type: ApplicationPropertyType;
+}
+
 interface SavedMessage {
   body: string;
   contentType: string;
@@ -27,10 +34,37 @@ interface SavedMessage {
   correlationId: string;
   replyTo: string;
   sessionId: string;
-  properties: { key: string; value: string }[];
+  properties: PropertyRow[];
   sendMultiple?: boolean;
   sendCount?: string;
 }
+
+function normalizeType(type: unknown): ApplicationPropertyType {
+  return APPLICATION_PROPERTY_TYPES.includes(type as ApplicationPropertyType)
+    ? (type as ApplicationPropertyType)
+    : 'string';
+}
+
+// Fallback when the backend didn't report a property type: infer it from the JSON value.
+function inferType(value: unknown): ApplicationPropertyType {
+  if (typeof value === 'boolean') return 'bool';
+  if (typeof value === 'number') return Number.isInteger(value) ? 'long' : 'double';
+  return 'string';
+}
+
+// Client-side check mirroring the backend converter, so a bad value fails before the request.
+// TimeSpan is left to the backend (its d.hh:mm:ss format is awkward to validate here).
+const TYPE_VALIDATORS: Record<ApplicationPropertyType, (v: string) => boolean> = {
+  string: () => true,
+  bool: v => /^(true|false)$/i.test(v.trim()),
+  int: v => /^-?\d+$/.test(v.trim()) && Number(v) >= -2147483648 && Number(v) <= 2147483647,
+  long: v => /^-?\d+$/.test(v.trim()),
+  double: v => v.trim() !== '' && !isNaN(Number(v)),
+  decimal: v => v.trim() !== '' && !isNaN(Number(v)),
+  guid: v => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim()),
+  datetime: v => !isNaN(Date.parse(v.trim())),
+  timespan: () => true,
+};
 
 interface SendMessageDialogProps {
   connection: Connection;
@@ -42,7 +76,12 @@ interface SendMessageDialogProps {
 function loadSavedMessage(): SavedMessage {
   try {
     const saved = localStorage.getItem(LAST_MESSAGE_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed: SavedMessage = JSON.parse(saved);
+      // Entries saved before properties were typed have no `type` field.
+      parsed.properties = (parsed.properties ?? []).map(p => ({ ...p, type: normalizeType(p.type) }));
+      return parsed;
+    }
   } catch {}
   return {
     body: '{\n  \n}',
@@ -68,7 +107,11 @@ function templateToSavedMessage(template: ServiceBusMessage): SavedMessage {
     replyTo: template.replyTo || '',
     sessionId: template.sessionId || '',
     properties: template.applicationProperties
-      ? Object.entries(template.applicationProperties).map(([key, value]) => ({ key, value: String(value) }))
+      ? Object.entries(template.applicationProperties).map(([key, value]) => ({
+          key,
+          value: String(value),
+          type: normalizeType(template.applicationPropertyTypes?.[key] ?? inferType(value)),
+        }))
       : [],
   };
 }
@@ -82,7 +125,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
   const [correlationId, setCorrelationId] = useState(initial.correlationId);
   const [replyTo, setReplyTo] = useState(initial.replyTo);
   const [sessionId, setSessionId] = useState(initial.sessionId);
-  const [properties, setProperties] = useState<{ key: string; value: string }[]>(initial.properties);
+  const [properties, setProperties] = useState<PropertyRow[]>(initial.properties);
   const [sendMultiple, setSendMultiple] = useState(initial.sendMultiple ?? false);
   const [sendCount, setSendCount] = useState(initial.sendCount ?? '5');
   // Scheduling: the message is only scheduled when the checkbox is on AND a future time is picked.
@@ -127,7 +170,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     if (!templateName.trim()) return;
     try {
       const appProps = properties.filter(p => p.key).length > 0
-        ? JSON.stringify(Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, p.value])))
+        ? JSON.stringify(Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, { value: p.value, type: p.type }])))
         : undefined;
       await saveMessageTemplate({
         name: templateName.trim(),
@@ -162,7 +205,14 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     if (t.applicationProperties) {
       try {
         const parsed = JSON.parse(t.applicationProperties);
-        setProperties(Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) })));
+        // New templates store { value, type } per key; older ones store the bare string value.
+        setProperties(Object.entries(parsed).map(([key, raw]) => {
+          if (raw && typeof raw === 'object' && 'value' in raw) {
+            const typed = raw as { value: unknown; type?: unknown };
+            return { key, value: String(typed.value ?? ''), type: normalizeType(typed.type) };
+          }
+          return { key, value: String(raw), type: 'string' as ApplicationPropertyType };
+        }));
       } catch {
         setProperties([]);
       }
@@ -274,6 +324,12 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       setError('Scheduled time must be in the future');
       return;
     }
+    for (const p of properties.filter(p => p.key)) {
+      if (!TYPE_VALIDATORS[p.type](p.value)) {
+        setError(`Application property '${p.key}': '${p.value}' is not a valid ${p.type} value`);
+        return;
+      }
+    }
     setError('');
     setLoading(true);
 
@@ -287,7 +343,7 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
       sessionId: sessionId || undefined,
       scheduledEnqueueTime: scheduleForLater && scheduledTime ? scheduledTime.toISOString() : undefined,
       applicationProperties: properties.length > 0
-        ? Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, p.value]))
+        ? Object.fromEntries(properties.filter(p => p.key).map(p => [p.key, { value: p.value, type: p.type }]))
         : undefined,
     };
 
@@ -305,11 +361,15 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
     }
   };
 
-  const addProperty = () => setProperties([...properties, { key: '', value: '' }]);
+  const addProperty = () => setProperties([...properties, { key: '', value: '', type: 'string' }]);
   const removeProperty = (index: number) => setProperties(properties.filter((_, i) => i !== index));
-  const updateProperty = (index: number, field: 'key' | 'value', value: string) => {
+  const updateProperty = (index: number, field: 'key' | 'value' | 'type', value: string) => {
     const updated = [...properties];
-    updated[index][field] = value;
+    if (field === 'type') {
+      updated[index].type = normalizeType(value);
+    } else {
+      updated[index][field] = value;
+    }
     setProperties(updated);
   };
 
@@ -573,15 +633,25 @@ export default function SendMessageDialog({ connection, entity, onClose, templat
                       placeholder="Key"
                       value={prop.key}
                       onChange={e => updateProperty(i, 'key', e.target.value)}
-                      className="flex-1 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-white text-sm"
+                      className="flex-1 min-w-0 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-white text-sm"
                     />
                     <input
                       type="text"
                       placeholder="Value"
                       value={prop.value}
                       onChange={e => updateProperty(i, 'value', e.target.value)}
-                      className="flex-1 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-white text-sm"
+                      className="flex-1 min-w-0 px-2 py-1.5 bg-dark-900 border border-dark-500 rounded text-white text-sm"
                     />
+                    <select
+                      value={prop.type}
+                      onChange={e => updateProperty(i, 'type', e.target.value)}
+                      title="Property type"
+                      className="w-[5.5rem] shrink-0 px-1.5 py-1.5 bg-dark-900 border border-dark-500 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      {APPLICATION_PROPERTY_TYPES.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
                     <button onClick={() => removeProperty(i)} className="text-dark-400 hover:text-red-400">
                       <Trash2 className="w-4 h-4" />
                     </button>

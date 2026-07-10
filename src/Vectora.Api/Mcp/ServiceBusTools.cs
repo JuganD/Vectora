@@ -2,6 +2,8 @@ using Azure.Messaging.ServiceBus;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
+using System.Text.Json;
+using Vectora.Api.Helpers;
 using Vectora.Api.Models;
 using Vectora.Api.Repositories;
 using Vectora.Api.Services;
@@ -212,7 +214,8 @@ public static class ServiceBusTools
         [Description("Optional session id (required for session-enabled entities).")] string? sessionId = null,
         [Description("Optional reply-to address.")] string? replyTo = null,
         [Description("Optional UTC time to schedule the message for future enqueue.")] DateTimeOffset? scheduledEnqueueTime = null,
-        [Description("Optional custom application properties (string key/value pairs).")] Dictionary<string, string>? applicationProperties = null)
+        [Description("Optional custom application properties as string key/value pairs. Values are sent as strings unless a type is given in applicationPropertyTypes.")] Dictionary<string, string>? applicationProperties = null,
+        [Description("Optional per-key type for applicationProperties (keys must match). Supported: string, bool, int, long, double, decimal, guid, datetime, timespan. Keys not listed here are sent as strings. Use this when the consumer expects a non-string type, e.g. an Int32 property.")] Dictionary<string, string>? applicationPropertyTypes = null)
     {
         var connection = await EnsureExposedAsync(connections, connectionId);
         if (!connection.McpAllowSend)
@@ -239,6 +242,24 @@ public static class ServiceBusTools
             throw new McpException("Message body is required.");
         }
 
+        Dictionary<string, JsonElement>? props = null;
+        if (applicationProperties is { Count: > 0 })
+        {
+            props = new Dictionary<string, JsonElement>(applicationProperties.Count);
+            foreach (var (key, value) in applicationProperties)
+            {
+                var type = applicationPropertyTypes?.GetValueOrDefault(key);
+                props[key] = string.IsNullOrWhiteSpace(type) || type == "string"
+                    ? JsonSerializer.SerializeToElement(value)
+                    : JsonSerializer.SerializeToElement(new { value, type });
+            }
+            var (propsValid, propsError) = ApplicationPropertyConverter.TryConvertAll(props, out _);
+            if (!propsValid)
+            {
+                throw new McpException(propsError);
+            }
+        }
+
         var dto = new SendMessageDto
         {
             Body = body,
@@ -249,7 +270,7 @@ public static class ServiceBusTools
             SessionId = sessionId,
             ReplyTo = replyTo,
             ScheduledEnqueueTime = scheduledEnqueueTime,
-            ApplicationProperties = applicationProperties
+            ApplicationProperties = props
         };
 
         var sent = await InvokeServiceBusAsync(() => serviceBus.SendMessageAsync(connectionId, entityPath, dto), entityPath);

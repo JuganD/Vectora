@@ -610,7 +610,12 @@ public class ServiceBusService : IServiceBusService
         }
         if (dto.ApplicationProperties != null)
         {
-            foreach (var kvp in dto.ApplicationProperties)
+            var (valid, error) = ApplicationPropertyConverter.TryConvertAll(dto.ApplicationProperties, out var converted);
+            if (!valid)
+            {
+                throw new ArgumentException(error);
+            }
+            foreach (var kvp in converted!)
             {
                 message.ApplicationProperties[kvp.Key] = kvp.Value;
             }
@@ -644,7 +649,8 @@ public class ServiceBusService : IServiceBusService
             DeadLetterReason = msg.DeadLetterReason,
             DeadLetterErrorDescription = msg.DeadLetterErrorDescription,
             DeadLetterSource = msg.DeadLetterSource,
-            ApplicationProperties = msg.ApplicationProperties.ToDictionary(k => k.Key, v => v.Value)
+            ApplicationProperties = msg.ApplicationProperties.ToDictionary(k => k.Key, v => v.Value),
+            ApplicationPropertyTypes = msg.ApplicationProperties.ToDictionary(k => k.Key, v => ApplicationPropertyConverter.TypeNameOf(v.Value))
         };
     }
 

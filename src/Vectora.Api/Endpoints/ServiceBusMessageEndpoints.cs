@@ -233,6 +233,11 @@ public static class ServiceBusMessageEndpoints
         {
             return Results.BadRequest(new { error = countError });
         }
+        var (propsValid, propsError) = ValidationHelper.ValidateApplicationProperties(dto.ApplicationProperties);
+        if (!propsValid)
+        {
+            return Results.BadRequest(new { error = propsError });
+        }
 
         var sentCount = await serviceBusService.SendMessagesAsync(connectionId, queueName, dto, count);
         if (sentCount == null)
@@ -254,6 +259,11 @@ public static class ServiceBusMessageEndpoints
         if (!countValid)
         {
             return Results.BadRequest(new { error = countError });
+        }
+        var (propsValid, propsError) = ValidationHelper.ValidateApplicationProperties(dto.ApplicationProperties);
+        if (!propsValid)
+        {
+            return Results.BadRequest(new { error = propsError });
         }
 
         var sentCount = await serviceBusService.SendMessagesAsync(connectionId, topicName, dto, count);

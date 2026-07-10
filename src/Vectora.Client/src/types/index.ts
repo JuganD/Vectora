@@ -73,7 +73,14 @@ export interface ServiceBusMessage {
   deadLetterErrorDescription?: string;
   deadLetterSource?: string;
   applicationProperties?: Record<string, unknown>;
+  // Backend-reported CLR type per application property ('string' | 'int' | 'long' | ...),
+  // used to preserve the original types when the message is used as a send template.
+  applicationPropertyTypes?: Record<string, string>;
 }
+
+// Wire type names for typed application properties (must match the backend converter).
+export const APPLICATION_PROPERTY_TYPES = ['string', 'bool', 'int', 'long', 'double', 'decimal', 'guid', 'datetime', 'timespan'] as const;
+export type ApplicationPropertyType = typeof APPLICATION_PROPERTY_TYPES[number];
 
 export interface SendMessageRequest {
   body: string;
@@ -87,7 +94,7 @@ export interface SendMessageRequest {
   to?: string;
   scheduledEnqueueTime?: string;
   timeToLive?: string;
-  applicationProperties?: Record<string, string>;
+  applicationProperties?: Record<string, { value: string; type: ApplicationPropertyType }>;
 }
 
 export type EntityStatus = 'Active' | 'Disabled' | 'SendDisabled' | 'ReceiveDisabled';

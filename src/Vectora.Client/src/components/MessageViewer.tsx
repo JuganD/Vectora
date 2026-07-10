@@ -139,9 +139,16 @@ export default function MessageViewer({ message, onUseAsTemplate, viewMode: cont
 
             {appProperties.length > 0 && (
               <PropertySection title="Application Properties">
-                {appProperties.map(([key, value]) => (
-                  <PropertyRow key={key} label={key} value={String(value)} />
-                ))}
+                {appProperties.map(([key, value]) => {
+                  const type = message.applicationPropertyTypes?.[key];
+                  return (
+                    <PropertyRow
+                      key={key}
+                      label={type && type !== 'string' ? `${key} (${type})` : key}
+                      value={String(value)}
+                    />
+                  );
+                })}
               </PropertySection>
             )}
           </div>

@@ -160,6 +160,15 @@ public static partial class ValidationHelper
         return (true, null);
     }
 
+    /// <summary>
+    /// Validates that every application property value can be converted to its declared type.
+    /// </summary>
+    public static (bool IsValid, string? Error) ValidateApplicationProperties(Dictionary<string, System.Text.Json.JsonElement>? properties)
+    {
+        var (valid, error) = ApplicationPropertyConverter.TryConvertAll(properties, out _);
+        return (valid, error);
+    }
+
     [GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial Regex EntityNameRegex();
 }
