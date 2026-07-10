@@ -777,17 +777,20 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               showDeadLetter ? 'text-red-400/80 max-h-6 opacity-100 mt-0.5' : 'max-h-0 opacity-0'
             }`}>Dead Letter Queue</p>
           </div>
-          {/* Message counts - hidden on very small screens */}
+          {/* Message counts */}
           {!connection.isEmulator && entityInfo && 'activeMessageCount' in entityInfo && (
-            <div className="hidden sm:flex items-center gap-2 ml-2 md:ml-4">
-              <span className="text-xs bg-dark-600 px-2 py-1 rounded">Active: {entityInfo.activeMessageCount}</span>
+            <div className="flex items-center gap-1 sm:gap-2 ml-1 md:ml-4 flex-shrink-0">
+              <span className="text-[11px] sm:text-xs bg-dark-600 px-2 py-1 rounded whitespace-nowrap">
+                <span className="sm:hidden">A: {entityInfo.activeMessageCount}</span>
+                <span className="hidden sm:inline">Active: {entityInfo.activeMessageCount}</span>
+              </span>
               <span className={`text-xs px-2 py-1 rounded ${entityInfo.deadLetterMessageCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-red-500/10 text-red-300'}`}>
                 DLQ: {entityInfo.deadLetterMessageCount}
               </span>
             </div>
           )}
           {/* Refresh button */}
-          <button onClick={handleRefresh} disabled={busy} className="flex items-center gap-1.5 ml-auto md:ml-3 px-2 md:px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white text-sm rounded-lg transition-colors disabled:opacity-50">
+          <button onClick={handleRefresh} disabled={busy} className="flex items-center gap-1.5 ml-1 md:ml-3 px-2 md:px-3 py-1.5 bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white text-sm rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap flex-shrink-0">
             <RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} />
             <span className="hidden md:inline">Refresh</span>
           </button>
@@ -795,7 +798,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           {isSessionEntity && (
             <button
               onClick={toggleSessionView}
-              className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors whitespace-nowrap flex-shrink-0 ${
                 sessionView
                   ? 'bg-primary-500/20 text-primary-400 hover:bg-primary-500/30'
                   : 'bg-dark-600 hover:bg-dark-500 text-dark-300 hover:text-white'
@@ -818,7 +821,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           {/* DLQ Toggle Button */}
           <button
             onClick={() => setShowDeadLetter(!showDeadLetter)}
-            className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors whitespace-nowrap flex-shrink-0 ${
               showDeadLetter
                 ? 'bg-primary-500/20 text-primary-400 hover:bg-primary-500/30'
                 : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
