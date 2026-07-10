@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Calendar, Clock, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { formatDateTime, useDateFormat, SYSTEM_FORMAT } from '../utils/dateFormat';
 
 interface DateTimePickerProps {
   value: Date | null;
@@ -103,8 +104,12 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
 
   const isDayDisabled = (day: Date) => !!min && startOfDay(day) < startOfDay(min);
 
+  // With the system default keep the friendly weekday display; otherwise honor the user's format.
+  const dateFormat = useDateFormat();
   const display = value
-    ? value.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    ? dateFormat === SYSTEM_FORMAT
+      ? value.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : formatDateTime(value, dateFormat)
     : '';
 
   return (

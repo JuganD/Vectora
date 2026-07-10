@@ -6,6 +6,12 @@ import {
   getConnections,
   updateConnectionMcpFlags,
 } from "../api/client";
+import {
+  DATE_FORMATS,
+  formatDateTime,
+  getDateFormat,
+  setDateFormat as applyDateFormat,
+} from "../utils/dateFormat";
 import type { Connection } from "../types";
 
 interface SettingsDialogProps {
@@ -14,6 +20,7 @@ interface SettingsDialogProps {
 
 export default function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [batchTimeout, setBatchTimeout] = useState("60");
+  const [dateFormat, setDateFormat] = useState(getDateFormat());
   const [mcpEnabled, setMcpEnabled] = useState(false);
   const [mcpApiKey, setMcpApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
@@ -69,6 +76,7 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      applyDateFormat(dateFormat); // local display preference, not a backend setting
       const timeout = parseInt(batchTimeout) || 60;
       const updated = await updateSettings({
         batchOperationTimeoutSeconds: timeout,
@@ -137,6 +145,29 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
               />
               <p className="text-xs text-dark-500 mt-1">
                 Range: 10-600 seconds (default: 60)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-dark-300 mb-1">
+                Date Format
+              </label>
+              <p className="text-xs text-dark-400 mb-2">
+                How dates and times are displayed across the app.
+              </p>
+              <select
+                value={dateFormat}
+                onChange={(e) => setDateFormat(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                {DATE_FORMATS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-dark-500 mt-1">
+                Example: {formatDateTime(new Date(), dateFormat)}
               </p>
             </div>
 
