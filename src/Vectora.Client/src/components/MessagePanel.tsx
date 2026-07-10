@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search } from 'lucide-react';
+import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search, GripVertical } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo } from '../types';
 import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
+
+const PANEL_RATIO_KEY = 'vectora_message_panel_ratio';
 
 interface MessagePanelProps {
   connection: Connection | null;
@@ -69,6 +71,45 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [selectMode, setSelectMode] = useState(false);
   const [detailsTab, setDetailsTab] = useState<'body' | 'properties'>('body');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Draggable splitter between the message list and the detail viewer (desktop only).
+  // The ratio is the list panel's share of the container width, persisted across sessions.
+  const [listPanelRatio, setListPanelRatio] = useState(() => {
+    const saved = localStorage.getItem(PANEL_RATIO_KEY);
+    return saved ? parseFloat(saved) : 0.5;
+  });
+  const [isResizingPanels, setIsResizingPanels] = useState(false);
+  const panelsContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(PANEL_RATIO_KEY, listPanelRatio.toString());
+  }, [listPanelRatio]);
+
+  const handleSplitterMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingPanels(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingPanels) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!panelsContainerRef.current) return;
+      const rect = panelsContainerRef.current.getBoundingClientRect();
+      const newRatio = (e.clientX - rect.left) / rect.width;
+      // Clamp between 20% and 80%
+      setListPanelRatio(Math.min(0.8, Math.max(0.2, newRatio)));
+    };
+    const handleMouseUp = () => setIsResizingPanels(false);
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingPanels]);
 
   // Client-side search over the flat message list. When a query is entered we keep peeking
   // pages until the entity is exhausted, then filter the already-loaded messages locally, so
@@ -835,15 +876,18 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       </div>
 
       {/* Content - stacked on mobile, side-by-side on desktop */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 relative z-10">
+      <div ref={panelsContainerRef} className={`flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 relative z-10 ${isResizingPanels ? 'select-none' : ''}`}>
         {/* Message List - full width on mobile when in list view */}
-        <div className={`
-          ${isMobile
-            ? mobileView === 'list' ? 'flex-1' : 'hidden'
-            : 'w-1/2'
-          }
-          border-r border-dark-700 flex flex-col min-h-0
-        `}>
+        <div
+          className={`
+            ${isMobile
+              ? mobileView === 'list' ? 'flex-1' : 'hidden'
+              : 'flex-none'
+            }
+            flex flex-col min-h-0 min-w-0
+          `}
+          style={isMobile ? undefined : { width: `${listPanelRatio * 100}%` }}
+        >
           {sessionView && !selectedSession ? (
             /* ===== Session list ===== */
             <>
@@ -1025,13 +1069,23 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           )}
         </div>
 
+        {/* Resize handle - hidden on mobile */}
+        {!isMobile && (
+          <div
+            onMouseDown={handleSplitterMouseDown}
+            className={`w-1 flex-none bg-dark-700 hover:bg-primary-500 cursor-col-resize items-center justify-center group transition-colors hidden md:flex ${isResizingPanels ? 'bg-primary-500' : ''}`}
+          >
+            <GripVertical className="w-3 h-3 text-dark-400 group-hover:text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+        )}
+
         {/* Message Detail - full width on mobile when in detail view */}
         <div className={`
           ${isMobile
             ? mobileView === 'detail' ? 'flex-1' : 'hidden'
-            : 'w-1/2'
+            : 'flex-1'
           }
-          flex flex-col min-h-0
+          flex flex-col min-h-0 min-w-0
         `}>
           {selectedMessage ? (
             <>
