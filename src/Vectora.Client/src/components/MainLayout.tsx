@@ -171,6 +171,8 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
 
   // Close dropdown when clicking outside
   useEffect(() => {
+    if (isMobile) return;
+
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowConnectionDropdown(false);
@@ -178,7 +180,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [isMobile]);
 
   const handleLogout = () => {
     localStorage.removeItem('vectora_token');
@@ -420,4 +422,3 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     </div>
   );
 }
-
