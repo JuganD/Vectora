@@ -820,6 +820,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           )}
           {/* DLQ Toggle Button */}
           <button
+            data-tour="dlq-button"
             onClick={() => setShowDeadLetter(!showDeadLetter)}
             className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors whitespace-nowrap flex-shrink-0 ${
               showDeadLetter
@@ -843,7 +844,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         {/* Action buttons - scrollable on mobile */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 -mx-3 px-3 md:mx-0 md:px-0">
           {selectedEntity.type !== 'subscription' && (
-            <button onClick={() => setShowSendDialog(true)} className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg whitespace-nowrap flex-shrink-0">
+            <button data-tour="send-button" onClick={() => setShowSendDialog(true)} className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg whitespace-nowrap flex-shrink-0">
               <Send className="w-4 h-4" />
               <span className="hidden sm:inline">Send</span>
             </button>
@@ -868,6 +869,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
             </button>
           ) : (
             <button
+              data-tour="consume-button"
               onClick={() => setShowConsumePopup(true)}
               disabled={loading || messages.length === 0}
               className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm rounded-lg disabled:opacity-50 whitespace-nowrap flex-shrink-0"
@@ -969,6 +971,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                     <div className="relative flex-1 min-w-0 max-w-xs mx-auto">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dark-500 pointer-events-none" />
                       <input
+                        data-tour="message-search"
                         type="text"
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
@@ -995,6 +998,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                         </button>
                       )}
                       <button
+                        data-tour="select-mode-button"
                         onClick={toggleSelectMode}
                         className={`text-xs px-3 py-1.5 rounded transition-colors ${
                           selectMode

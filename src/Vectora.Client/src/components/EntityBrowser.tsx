@@ -268,6 +268,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
           <input
+            data-tour="entity-search"
             type="text"
             placeholder="Search entities..."
             value={searchTerm}
@@ -286,7 +287,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
       </div>
 
       {/* Entity List */}
-      <div className="flex-1 overflow-auto p-2 relative">
+      <div data-tour="entity-list" className="flex-1 overflow-auto p-2 relative">
         {loading && queues.length === 0 && topics.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-dark-500">
             <p>Loading...</p>
@@ -303,7 +304,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   </button>
                 )}
               </div>
-              {filteredQueues.map(queue => (
+              {filteredQueues.map((queue, idx) => (
                 <EntityItem
                   key={queue.name}
                   icon={<Inbox className="w-4 h-4" />}
@@ -316,6 +317,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   onEdit={canManage ? () => openEditDialog('queue', queue.name) : undefined}
                   isEmulator={!canManage}
                   pending={pendingQueues.has(queue.name)}
+                  tourId={idx === 0 ? 'entity-swipe' : undefined}
                 />
               ))}
               {filteredQueues.length === 0 && !searchTerm && (
@@ -493,9 +495,10 @@ interface EntityItemProps {
   onEdit?: () => void;
   isEmulator?: boolean;
   pending?: boolean;
+  tourId?: string;
 }
 
-function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending }: EntityItemProps) {
+function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending, tourId }: EntityItemProps) {
   if (pending) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
@@ -634,7 +637,7 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
   }
 
   return (
-    <div className="relative overflow-hidden rounded-lg" ref={containerRef}>
+    <div className="relative overflow-hidden rounded-lg" ref={containerRef} {...(tourId ? { 'data-tour': tourId } : {})}>
       {/* Action buttons behind - Edit (orange) + Delete (red) */}
       {showActions && (
         <div className="absolute right-0 top-0 bottom-0 flex">

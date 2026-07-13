@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { LogOut, RefreshCw, ChevronDown, Check, Menu, X, Settings } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity } from '../types';
-import { getConnections, getEntities, getQueueRuntimeInfo, getSubscriptionRuntimeInfo } from '../api/client';
+import { getConnections, getEntities, getQueueRuntimeInfo, getSubscriptionRuntimeInfo, getSettings, updateSettings } from '../api/client';
 import ConnectionManager from './ConnectionManager';
 import EntityBrowser from './EntityBrowser';
 import MessagePanel from './MessagePanel';
 import SettingsDialog from './SettingsDialog';
+import TourGuide, { TOUR_STEPS, CURRENT_TOUR_VERSION } from './TourGuide';
 
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
@@ -39,6 +40,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [showConnectionDropdown, setShowConnectionDropdown] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showTour, setShowTour] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
@@ -153,6 +155,33 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     loadConnections();
   }, []);
 
+  // Load settings once to determine whether the tour should auto-start.
+  useEffect(() => {
+    getSettings().then(settings => {
+      if (settings.tourGuideCompletedStep < CURRENT_TOUR_VERSION) {
+        setShowTour(true);
+      }
+    }).catch(() => { /* ignore – tour remains hidden */ });
+  }, []);
+
+  const handleTourComplete = useCallback(async () => {
+    setShowTour(false);
+    try {
+      await updateSettings({ tourGuideCompletedStep: CURRENT_TOUR_VERSION });
+    } catch {
+      // Non-critical; ignore
+    }
+  }, []);
+
+  const handleTourSkip = useCallback(async () => {
+    setShowTour(false);
+    try {
+      await updateSettings({ tourGuideCompletedStep: CURRENT_TOUR_VERSION });
+    } catch {
+      // Non-critical; ignore
+    }
+  }, []);
+
   useEffect(() => {
     setSelectedEntity(null);
     const conn = selectedConnection;
@@ -215,6 +244,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
           {/* Connection Selector - hidden on mobile (moved to sidebar) */}
           <div className="relative hidden md:block" ref={dropdownRef}>
             <button
+              data-tour="connection-selector"
               onClick={() => setShowConnectionDropdown(!showConnectionDropdown)}
               className="flex items-center gap-2 px-4 py-2 bg-dark-800 border border-dark-600 rounded-lg hover:border-dark-500 transition-colors min-w-[240px]"
             >
@@ -264,6 +294,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
                 </div>
                 <div className="border-t border-dark-600 p-2">
                   <button
+                    data-tour="manage-connections"
                     onClick={() => { setShowConnectionDropdown(false); setShowConnectionManager(true); }}
                     className="w-full px-3 py-2 text-sm text-primary-400 hover:bg-dark-700 rounded-lg transition-colors"
                   >
@@ -289,6 +320,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         {/* Right side actions */}
         <div className="flex items-center gap-2 md:gap-4">
           <button
+            data-tour="settings-button"
             onClick={() => setShowSettings(true)}
             className="flex items-center gap-2 text-dark-400 hover:text-white transition-colors text-sm p-2 md:p-0"
             title="Settings"
@@ -319,7 +351,9 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         )}
 
         {/* Entity Browser - Left Panel / Mobile Drawer */}
-        <div className={`
+        <div
+          data-tour="entity-browser"
+          className={`
           ${isMobile
             ? `absolute inset-y-0 left-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-in-out ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}`
             : 'w-80 relative'
@@ -393,7 +427,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         </div>
 
         {/* Message Panel - Right Panel / Full width on mobile */}
-        <div className="flex-1 overflow-hidden h-full">
+        <div data-tour="message-panel" className="flex-1 overflow-hidden h-full">
           <MessagePanel
             connection={selectedConnection}
             selectedEntity={selectedEntity}
@@ -417,7 +451,18 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       )}
 
       {showSettings && (
-        <SettingsDialog onClose={() => setShowSettings(false)} />
+        <SettingsDialog
+          onClose={() => setShowSettings(false)}
+          onStartTour={() => { setShowSettings(false); setShowTour(true); }}
+        />
+      )}
+
+      {showTour && (
+        <TourGuide
+          steps={TOUR_STEPS}
+          onComplete={handleTourComplete}
+          onSkip={handleTourSkip}
+        />
       )}
     </div>
   );

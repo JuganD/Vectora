@@ -192,6 +192,8 @@ export interface Settings {
   mcpEnabled: boolean;
   // The configured MCP API key; empty string means no key (authorization not required).
   mcpApiKey: string;
+  // Last completed tour guide version (0 = never shown).
+  tourGuideCompletedStep: number;
 }
 
 export interface UpdateSettingsRequest {
@@ -199,6 +201,8 @@ export interface UpdateSettingsRequest {
   mcpEnabled?: boolean;
   // Key to store; omit to leave unchanged, or pass an empty string to clear it.
   mcpApiKey?: string;
+  // Tour guide: pass the completed step to acknowledge it; omit to leave unchanged.
+  tourGuideCompletedStep?: number;
 }
 
 export const getSettings = () => fetchApi<Settings>('/settings');

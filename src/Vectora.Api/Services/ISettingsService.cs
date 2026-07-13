@@ -10,5 +10,9 @@ public interface ISettingsService
     Task SetMcpEnabledAsync(bool value);
     Task<string?> GetMcpApiKeyAsync();
     Task SetMcpApiKeyAsync(string? value);
+
+    // Tour guide: numeric enum tracking the last completed tour version (0 = never shown).
+    Task<int> GetTourGuideCompletedStepAsync();
+    Task SetTourGuideCompletedStepAsync(int step);
 }
 
