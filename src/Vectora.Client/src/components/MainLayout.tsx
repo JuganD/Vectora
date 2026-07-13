@@ -6,7 +6,7 @@ import ConnectionManager from './ConnectionManager';
 import EntityBrowser from './EntityBrowser';
 import MessagePanel from './MessagePanel';
 import SettingsDialog from './SettingsDialog';
-import TourGuide, { TOUR_STEPS, CURRENT_TOUR_VERSION } from './TourGuide';
+import TourGuide, { TOUR_STEPS } from './TourGuide';
 
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
@@ -41,6 +41,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTour, setShowTour] = useState(false);
+  const [tourInitialStep, setTourInitialStep] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
@@ -158,7 +159,9 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   // Load settings once to determine whether the tour should auto-start.
   useEffect(() => {
     getSettings().then(settings => {
-      if (settings.tourGuideCompletedStep < CURRENT_TOUR_VERSION) {
+      const completed = settings.tourGuideCompletedStep;
+      if (completed < TOUR_STEPS.length) {
+        setTourInitialStep(completed);
         setShowTour(true);
       }
     }).catch(() => { /* ignore – tour remains hidden */ });
@@ -167,7 +170,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const handleTourComplete = useCallback(async () => {
     setShowTour(false);
     try {
-      await updateSettings({ tourGuideCompletedStep: CURRENT_TOUR_VERSION });
+      await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
     } catch {
       // Non-critical; ignore
     }
@@ -176,7 +179,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const handleTourSkip = useCallback(async () => {
     setShowTour(false);
     try {
-      await updateSettings({ tourGuideCompletedStep: CURRENT_TOUR_VERSION });
+      await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
     } catch {
       // Non-critical; ignore
     }
@@ -453,13 +456,14 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       {showSettings && (
         <SettingsDialog
           onClose={() => setShowSettings(false)}
-          onStartTour={() => { setShowSettings(false); setShowTour(true); }}
+          onStartTour={() => { setShowSettings(false); setTourInitialStep(0); setShowTour(true); }}
         />
       )}
 
       {showTour && (
         <TourGuide
           steps={TOUR_STEPS}
+          initialStep={tourInitialStep}
           onComplete={handleTourComplete}
           onSkip={handleTourSkip}
         />

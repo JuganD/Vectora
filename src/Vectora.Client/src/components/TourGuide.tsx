@@ -25,6 +25,9 @@ interface TourGuideProps {
   steps: TourStep[];
   onComplete: () => void;
   onSkip: () => void;
+  // Step index to start from (default 0). Pass the stored completed-step count
+  // so returning users only see steps that were added after they last finished.
+  initialStep?: number;
 }
 
 const TOOLTIP_WIDTH = 320;
@@ -113,8 +116,8 @@ function computeTooltipPosition(
   return { position: 'fixed', top: Math.min(padded.bottom + 8, vh - TOOLTIP_MAX_HEIGHT - VIEWPORT_MARGIN), left, width: TOOLTIP_WIDTH };
 }
 
-export default function TourGuide({ steps, onComplete, onSkip }: TourGuideProps) {
-  const [currentIndex, setCurrentIndex] = useState(0);
+export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0 }: TourGuideProps) {
+  const [currentIndex, setCurrentIndex] = useState(Math.max(0, Math.min(initialStep, steps.length - 1)));
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const rafRef = useRef<number>(0);
@@ -311,8 +314,6 @@ export default function TourGuide({ steps, onComplete, onSkip }: TourGuideProps)
 }
 
 // ─── Tour step definitions ─────────────────────────────────────────────────
-
-export const CURRENT_TOUR_VERSION = 1;
 
 export const TOUR_STEPS: TourStep[] = [
   {
