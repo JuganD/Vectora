@@ -6,7 +6,17 @@ import ConnectionManager from './ConnectionManager';
 import EntityBrowser from './EntityBrowser';
 import MessagePanel from './MessagePanel';
 import SettingsDialog from './SettingsDialog';
-import TourGuide, { TOUR_STEPS } from './TourGuide';
+import TourGuide, {
+  TOUR_STEPS,
+  TOUR_DUMMY_CONNECTION,
+  TOUR_DUMMY_QUEUES,
+  TOUR_DUMMY_TOPICS,
+  TOUR_DUMMY_SELECTED_ENTITY,
+  TOUR_DUMMY_MESSAGES,
+  TOUR_ENTITY_BROWSER_FIRST_STEP,
+  TOUR_MESSAGE_PANEL_FIRST_STEP,
+  TOUR_LAST_DATA_STEP,
+} from './TourGuide';
 
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
@@ -42,6 +52,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [showSettings, setShowSettings] = useState(false);
   const [showTour, setShowTour] = useState(false);
   const [tourInitialStep, setTourInitialStep] = useState(0);
+  const [tourCurrentStep, setTourCurrentStep] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
@@ -169,6 +180,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
 
   const handleTourComplete = useCallback(async () => {
     setShowTour(false);
+    setTourCurrentStep(-1);
     try {
       await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
     } catch {
@@ -178,6 +190,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
 
   const handleTourSkip = useCallback(async () => {
     setShowTour(false);
+    setTourCurrentStep(-1);
     try {
       await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
     } catch {
@@ -218,6 +231,35 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     localStorage.removeItem('vectora_token');
     onLogout();
   };
+
+  // ── Tour dummy-data injection ─────────────────────────────────────────────
+  // When the tour is active we override the real connection/entity/queue state
+  // with static fixtures so the UI shows fully-populated panels instead of
+  // empty-state placeholders. This is purely presentational — no real API calls
+  // are made with the dummy connection (id = -1).
+  const tourNeedsEntityBrowser =
+    showTour &&
+    tourCurrentStep >= TOUR_ENTITY_BROWSER_FIRST_STEP &&
+    tourCurrentStep <= TOUR_LAST_DATA_STEP;
+
+  const tourNeedsMessagePanel =
+    showTour &&
+    tourCurrentStep >= TOUR_MESSAGE_PANEL_FIRST_STEP &&
+    tourCurrentStep <= TOUR_LAST_DATA_STEP;
+
+  const effectiveConnection: Connection | null = tourNeedsEntityBrowser
+    ? TOUR_DUMMY_CONNECTION
+    : selectedConnection;
+
+  const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : queues;
+  const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : topics;
+  const effectiveSupportsManagement = tourNeedsEntityBrowser ? true : supportsManagement;
+
+  const effectiveSelectedEntity: SelectedEntity | null = tourNeedsMessagePanel
+    ? TOUR_DUMMY_SELECTED_ENTITY
+    : selectedEntity;
+
+  const tourDummyMessagesForPanel = tourNeedsMessagePanel ? TOUR_DUMMY_MESSAGES : undefined;
 
   return (
     <div className="h-full bg-dark-950 flex flex-col overflow-hidden">
@@ -418,27 +460,28 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             </div>
           )}
           <EntityBrowser
-            connection={selectedConnection}
-            queues={queues}
-            topics={topics}
-            selectedEntity={selectedEntity}
+            connection={effectiveConnection}
+            queues={effectiveQueues}
+            topics={effectiveTopics}
+            selectedEntity={effectiveSelectedEntity}
             onSelectEntity={handleSelectEntity}
-            onRefresh={refreshEntities}
-            loading={loading}
-            canManage={supportsManagement}
+            onRefresh={tourNeedsEntityBrowser ? () => {} : refreshEntities}
+            loading={tourNeedsEntityBrowser ? false : loading}
+            canManage={effectiveSupportsManagement}
           />
         </div>
 
         {/* Message Panel - Right Panel / Full width on mobile */}
         <div data-tour="message-panel" className="flex-1 overflow-hidden h-full">
           <MessagePanel
-            connection={selectedConnection}
-            selectedEntity={selectedEntity}
-            queues={queues}
-            topics={topics}
-            onUpdateEntityCount={updateEntityCount}
+            connection={effectiveConnection}
+            selectedEntity={effectiveSelectedEntity}
+            queues={effectiveQueues}
+            topics={effectiveTopics}
+            onUpdateEntityCount={tourNeedsMessagePanel ? undefined : updateEntityCount}
             isMobile={isMobile}
             onOpenSidebar={() => setShowMobileSidebar(true)}
+            tourDummyMessages={tourDummyMessagesForPanel}
           />
         </div>
       </div>
@@ -466,6 +509,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
           initialStep={tourInitialStep}
           onComplete={handleTourComplete}
           onSkip={handleTourSkip}
+          onStepChange={setTourCurrentStep}
         />
       )}
     </div>

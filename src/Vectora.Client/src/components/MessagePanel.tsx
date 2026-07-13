@@ -16,6 +16,9 @@ interface MessagePanelProps {
   onUpdateEntityCount?: (entity: SelectedEntity) => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
+  // When set, the panel uses these messages instead of loading from the API
+  // (used during the tour to show dummy data without a real connection).
+  tourDummyMessages?: ServiceBusMessage[];
 }
 
 // Case-insensitive substring match across a message's searchable fields, including its
@@ -52,7 +55,7 @@ function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
   return false;
 }
 
-export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar }: MessagePanelProps) {
+export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages }: MessagePanelProps) {
   useDateFormat(); // re-render session timestamps when the date format setting changes
   // Mobile view state: 'list' shows message list, 'detail' shows message detail
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
@@ -199,6 +202,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
   const loadMoreMessages = async () => {
     if (!connection || !selectedEntity || loadingMore || loadingAll || !hasMore || messages.length === 0) return;
+    if (tourDummyMessages !== undefined) return; // tour mode: no more pages to load
     setLoadingMore(true);
     try {
       const lastSequenceNumber = messages[messages.length - 1].sequenceNumber;
@@ -230,6 +234,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // message. Guarded by a ref so scroll paging / repeated triggers can't run it concurrently.
   const loadAllRemaining = useCallback(async () => {
     if (!connection || !selectedEntity || loadAllRef.current) return;
+    if (tourDummyMessages !== undefined) return; // tour mode: messages are already complete
     const runId = ++loadAllRunIdRef.current;
     loadAllRef.current = true;
     setLoadingAll(true);
@@ -436,6 +441,12 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       setSessions([]);
       return;
     }
+    // Tour mode: use static dummy messages, no API calls.
+    if (tourDummyMessages !== undefined) {
+      setMessages(tourDummyMessages);
+      setHasMore(false);
+      return;
+    }
     if (sessionView && !isSessionEntity) {
       // Selected a non-session entity while session view was on — fall back to messages.
       setSessionView(false);
@@ -447,7 +458,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       loadMessages();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, selectedEntity, showDeadLetter, sessionView, isSessionEntity]);
+  }, [connection, selectedEntity, showDeadLetter, sessionView, isSessionEntity, tourDummyMessages]);
 
   // Keyboard navigation for message list
   useEffect(() => {

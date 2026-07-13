@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X, BookOpen, Search, Settings } from 'lucide-react';
+import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage } from '../types';
 
 export interface TourStep {
   id: string;
@@ -30,6 +31,8 @@ interface TourGuideProps {
   // Step index to start from (default 0). Pass the stored completed-step count
   // so returning users only see steps that were added after they last finished.
   initialStep?: number;
+  // Called whenever the active step index changes (including on initial render).
+  onStepChange?: (step: number) => void;
 }
 
 const TOOLTIP_WIDTH = 320;
@@ -118,11 +121,16 @@ function computeTooltipPosition(
   return { position: 'fixed', top: Math.min(padded.bottom + 8, vh - TOOLTIP_MAX_HEIGHT - VIEWPORT_MARGIN), left, width: TOOLTIP_WIDTH };
 }
 
-export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0 }: TourGuideProps) {
+export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0, onStepChange }: TourGuideProps) {
   const [currentIndex, setCurrentIndex] = useState(Math.max(0, Math.min(initialStep, steps.length - 1)));
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const rafRef = useRef<number>(0);
+
+  // Notify parent of the active step whenever it changes.
+  useEffect(() => {
+    onStepChange?.(currentIndex);
+  }, [currentIndex, onStepChange]);
 
   const currentStep = steps[currentIndex];
   const padding = currentStep?.spotlightPadding ?? 8;
@@ -323,6 +331,88 @@ export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0 }
 }
 
 // ─── Tour step definitions ─────────────────────────────────────────────────
+
+// ─── Dummy data for tour showcase ─────────────────────────────────────────
+// These are purely frontend fixtures used while the tour is active so that
+// the entity browser and message panel show real UI (buttons, lists, etc.)
+// instead of empty-state placeholders.
+
+export const TOUR_DUMMY_CONNECTION: Connection = {
+  id: -1,
+  name: 'demo-servicebus',
+  connectionString: '',
+  isEmulator: false,
+  mcpExposed: false,
+  mcpAllowSend: false,
+};
+
+export const TOUR_DUMMY_QUEUES: QueueInfo[] = [
+  { name: 'orders-queue', activeMessageCount: 42, deadLetterMessageCount: 3, isEmulator: false, requiresSession: false },
+  { name: 'notifications', activeMessageCount: 0, deadLetterMessageCount: 0, isEmulator: false, requiresSession: false },
+  { name: 'payment-events', activeMessageCount: 7, deadLetterMessageCount: 1, isEmulator: false, requiresSession: false },
+];
+
+export const TOUR_DUMMY_TOPICS: TopicInfo[] = [
+  {
+    name: 'domain-events',
+    isEmulator: false,
+    subscriptions: [
+      { name: 'audit-log', activeMessageCount: 12, deadLetterMessageCount: 0, requiresSession: false },
+      { name: 'email-sender', activeMessageCount: 5, deadLetterMessageCount: 0, requiresSession: false },
+      { name: 'analytics', activeMessageCount: 0, deadLetterMessageCount: 0, requiresSession: false },
+    ],
+  },
+];
+
+export const TOUR_DUMMY_SELECTED_ENTITY: SelectedEntity = { type: 'queue', name: 'orders-queue' };
+
+const _now = new Date();
+const _isoOffset = (offsetSec: number) => new Date(_now.getTime() - offsetSec * 1000).toISOString();
+const _ttl = new Date(_now.getTime() + 14 * 86400 * 1000).toISOString();
+
+export const TOUR_DUMMY_MESSAGES: ServiceBusMessage[] = [
+  {
+    messageId: 'tour-msg-1',
+    body: '{ "orderId": 1042, "status": "pending", "items": 3, "total": 124.99 }',
+    contentType: 'application/json',
+    subject: 'order-created',
+    sequenceNumber: 1042,
+    enqueuedTime: _isoOffset(120),
+    state: 'Active',
+    timeToLive: 'P14D',
+    expiresAt: _ttl,
+    deliveryCount: 0,
+    applicationProperties: { environment: 'demo' },
+  },
+  {
+    messageId: 'tour-msg-2',
+    body: '{ "orderId": 1041, "status": "complete", "items": 1, "total": 29.99 }',
+    contentType: 'application/json',
+    subject: 'order-updated',
+    sequenceNumber: 1041,
+    enqueuedTime: _isoOffset(300),
+    state: 'Active',
+    timeToLive: 'P14D',
+    expiresAt: _ttl,
+    deliveryCount: 1,
+  },
+  {
+    messageId: 'tour-msg-3',
+    body: '{ "orderId": 1040, "status": "shipped" }',
+    contentType: 'application/json',
+    subject: 'order-updated',
+    sequenceNumber: 1040,
+    enqueuedTime: _isoOffset(600),
+    state: 'Active',
+    timeToLive: 'P14D',
+    expiresAt: _ttl,
+    deliveryCount: 0,
+  },
+];
+
+// ─── Step-range helpers (computed once from TOUR_STEPS so order changes are safe)
+// These are exported so MainLayout can decide which dummy data to inject per step.
+// Defined before TOUR_STEPS but resolved as const after — see bottom of file.
 
 export const TOUR_STEPS: TourStep[] = [
   {
@@ -638,3 +728,8 @@ export const TOUR_STEPS: TourStep[] = [
     ),
   },
 ];
+
+// Step-range helpers resolved from TOUR_STEPS so they stay correct if steps are reordered.
+export const TOUR_ENTITY_BROWSER_FIRST_STEP = TOUR_STEPS.findIndex(s => s.id === 'entity-browser');
+export const TOUR_MESSAGE_PANEL_FIRST_STEP = TOUR_STEPS.findIndex(s => s.id === 'message-panel');
+export const TOUR_LAST_DATA_STEP = TOUR_STEPS.findIndex(s => s.id === 'message-search');
