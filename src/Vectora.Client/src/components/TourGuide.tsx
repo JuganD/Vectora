@@ -123,6 +123,7 @@ export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0, 
   const [currentIndex, setCurrentIndex] = useState(Math.max(0, Math.min(initialStep, steps.length - 1)));
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
+  const mutationObserverRef = useRef<MutationObserver | null>(null);
   const rafRef = useRef<number>(0);
 
   // Notify parent of the active step whenever it changes.
@@ -151,17 +152,33 @@ export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0, 
 
     // Observe the target element for size changes (e.g. lazy-rendered content)
     observerRef.current?.disconnect();
+    mutationObserverRef.current?.disconnect();
     const selector = currentStep?.targetSelector ?? `[data-tour="${currentStep?.id}"]`;
     const el = currentStep ? document.querySelector(selector) : null;
     if (el) {
       observerRef.current = new ResizeObserver(onResize);
       observerRef.current.observe(el);
+    } else if (currentStep) {
+      // Element not yet in DOM (e.g. inside a conditionally rendered dropdown) —
+      // watch for it to appear, then re-measure and switch to ResizeObserver.
+      mutationObserverRef.current = new MutationObserver(() => {
+        const found = document.querySelector(selector);
+        if (found) {
+          updateTargetRect();
+          mutationObserverRef.current?.disconnect();
+          observerRef.current?.disconnect();
+          observerRef.current = new ResizeObserver(onResize);
+          observerRef.current.observe(found);
+        }
+      });
+      mutationObserverRef.current.observe(document.body, { childList: true, subtree: true });
     }
 
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
       observerRef.current?.disconnect();
+      mutationObserverRef.current?.disconnect();
       cancelAnimationFrame(rafRef.current);
     };
   }, [currentStep, updateTargetRect]);
