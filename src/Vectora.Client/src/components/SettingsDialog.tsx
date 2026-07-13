@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Settings, Bot, Copy, Check, Eye, EyeOff } from "lucide-react";
+import { X, Settings, Bot, Copy, Check, Eye, EyeOff, BookOpen } from "lucide-react";
 import {
   getSettings,
   updateSettings,
@@ -16,9 +16,10 @@ import type { Connection } from "../types";
 
 interface SettingsDialogProps {
   onClose: () => void;
+  onStartTour?: () => void;
 }
 
-export default function SettingsDialog({ onClose }: SettingsDialogProps) {
+export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogProps) {
   const [batchTimeout, setBatchTimeout] = useState("60");
   const [dateFormat, setDateFormat] = useState(getDateFormat());
   const [mcpEnabled, setMcpEnabled] = useState(false);
@@ -325,20 +326,32 @@ export default function SettingsDialog({ onClose }: SettingsDialogProps) {
               )}
             </div>
 
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-dark-600 hover:bg-dark-500 text-white text-sm rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-4 py-2 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg disabled:opacity-50"
-              >
-                {saving ? "Saving..." : "Save"}
-              </button>
+            <div className="flex gap-2 justify-between items-center">
+              {onStartTour && (
+                <button
+                  onClick={onStartTour}
+                  className="flex items-center gap-1.5 px-3 py-2 text-dark-300 hover:text-white bg-dark-700 hover:bg-dark-600 text-sm rounded-lg transition-colors"
+                  title="Replay the feature tour"
+                >
+                  <BookOpen className="w-4 h-4" />
+                  <span>Start Tour</span>
+                </button>
+              )}
+              <div className="flex gap-2 ml-auto">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 bg-dark-600 hover:bg-dark-500 text-white text-sm rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-4 py-2 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         )}

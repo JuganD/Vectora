@@ -16,6 +16,11 @@ interface MessagePanelProps {
   onUpdateEntityCount?: (entity: SelectedEntity) => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
+  // When set, the panel uses these messages instead of loading from the API
+  // (used during the tour to show dummy data without a real connection).
+  tourDummyMessages?: ServiceBusMessage[];
+  // When set, forces the message-detail tab to this mode (used during the tour).
+  tourForcedViewMode?: 'body' | 'properties';
 }
 
 // Case-insensitive substring match across a message's searchable fields, including its
@@ -52,7 +57,7 @@ function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
   return false;
 }
 
-export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar }: MessagePanelProps) {
+export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages, tourForcedViewMode }: MessagePanelProps) {
   useDateFormat(); // re-render session timestamps when the date format setting changes
   // Mobile view state: 'list' shows message list, 'detail' shows message detail
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
@@ -199,6 +204,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
   const loadMoreMessages = async () => {
     if (!connection || !selectedEntity || loadingMore || loadingAll || !hasMore || messages.length === 0) return;
+    if (tourDummyMessages !== undefined) return; // tour mode: no more pages to load
     setLoadingMore(true);
     try {
       const lastSequenceNumber = messages[messages.length - 1].sequenceNumber;
@@ -230,6 +236,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // message. Guarded by a ref so scroll paging / repeated triggers can't run it concurrently.
   const loadAllRemaining = useCallback(async () => {
     if (!connection || !selectedEntity || loadAllRef.current) return;
+    if (tourDummyMessages !== undefined) return; // tour mode: messages are already complete
     const runId = ++loadAllRunIdRef.current;
     loadAllRef.current = true;
     setLoadingAll(true);
@@ -436,6 +443,13 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       setSessions([]);
       return;
     }
+    // Tour mode: use static dummy messages, no API calls.
+    if (tourDummyMessages !== undefined) {
+      setMessages(tourDummyMessages);
+      setSelectedMessage(tourDummyMessages[0] ?? null);
+      setHasMore(false);
+      return;
+    }
     if (sessionView && !isSessionEntity) {
       // Selected a non-session entity while session view was on — fall back to messages.
       setSessionView(false);
@@ -447,7 +461,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       loadMessages();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, selectedEntity, showDeadLetter, sessionView, isSessionEntity]);
+  }, [connection, selectedEntity, showDeadLetter, sessionView, isSessionEntity, tourDummyMessages]);
 
   // Keyboard navigation for message list
   useEffect(() => {
@@ -820,6 +834,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           )}
           {/* DLQ Toggle Button */}
           <button
+            data-tour="dlq-button"
             onClick={() => setShowDeadLetter(!showDeadLetter)}
             className={`flex items-center gap-1.5 px-2 md:px-3 py-1.5 text-sm rounded-lg transition-colors whitespace-nowrap flex-shrink-0 ${
               showDeadLetter
@@ -843,7 +858,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         {/* Action buttons - scrollable on mobile */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 -mx-3 px-3 md:mx-0 md:px-0">
           {selectedEntity.type !== 'subscription' && (
-            <button onClick={() => setShowSendDialog(true)} className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg whitespace-nowrap flex-shrink-0">
+            <button data-tour="send-button" onClick={() => setShowSendDialog(true)} className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg whitespace-nowrap flex-shrink-0">
               <Send className="w-4 h-4" />
               <span className="hidden sm:inline">Send</span>
             </button>
@@ -868,6 +883,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
             </button>
           ) : (
             <button
+              data-tour="consume-button"
               onClick={() => setShowConsumePopup(true)}
               disabled={loading || messages.length === 0}
               className="flex items-center gap-1.5 px-2 md:px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-sm rounded-lg disabled:opacity-50 whitespace-nowrap flex-shrink-0"
@@ -969,6 +985,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                     <div className="relative flex-1 min-w-0 max-w-xs mx-auto">
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dark-500 pointer-events-none" />
                       <input
+                        data-tour="message-search"
                         type="text"
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
@@ -995,6 +1012,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                         </button>
                       )}
                       <button
+                        data-tour="select-mode-button"
                         onClick={toggleSelectMode}
                         className={`text-xs px-3 py-1.5 rounded transition-colors ${
                           selectMode
@@ -1109,7 +1127,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               <MessageViewer
                 message={selectedMessage}
                 onUseAsTemplate={(msg) => { setTemplateMessage(msg); setShowSendDialog(true); }}
-                viewMode={detailsTab}
+                viewMode={tourForcedViewMode ?? detailsTab}
                 onViewModeChange={setDetailsTab}
               />
             </>

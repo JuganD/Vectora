@@ -8,6 +8,7 @@ public class SettingsService : ISettingsService
     private const int DefaultBatchOperationTimeout = 60;
     private const string McpEnabledKey = "McpEnabled";
     private const string McpApiKeyKey = "McpApiKey";
+    private const string TourGuideCompletedStepKey = "TourGuideCompletedStep";
 
     private readonly ISettingsRepository _repository;
 
@@ -47,6 +48,16 @@ public class SettingsService : ISettingsService
     public async Task SetMcpApiKeyAsync(string? value)
     {
         await _repository.SetValueAsync(McpApiKeyKey, value ?? string.Empty);
+    }
+
+    public async Task<int> GetTourGuideCompletedStepAsync()
+    {
+        return await _repository.GetIntAsync(TourGuideCompletedStepKey, 0);
+    }
+
+    public async Task SetTourGuideCompletedStepAsync(int step)
+    {
+        await _repository.SetIntAsync(TourGuideCompletedStepKey, step);
     }
 }
 

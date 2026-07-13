@@ -84,6 +84,12 @@ html, body {
   animation: slideIn 0.2s ease-out;
 }
 
+/* Tour swipe-hint arrow — used by the entity-swipe tour step */
+@keyframes tourSwipeHint {
+  0%, 100% { transform: translateX(0px); opacity: 0.5; }
+  50% { transform: translateX(-7px); opacity: 1; }
+}
+
 /* Loading wave animation - left to right sweep */
 @keyframes loadingWave {
   0% { transform: translateX(-100%); }

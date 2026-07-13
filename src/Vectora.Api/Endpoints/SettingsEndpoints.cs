@@ -45,6 +45,11 @@ public static class SettingsEndpoints
             await settingsService.SetMcpApiKeyAsync(request.McpApiKey);
         }
 
+        if (request.TourGuideCompletedStep.HasValue)
+        {
+            await settingsService.SetTourGuideCompletedStepAsync(request.TourGuideCompletedStep.Value);
+        }
+
         return Results.Ok(await BuildResponseAsync(settingsService));
     }
 
@@ -55,7 +60,8 @@ public static class SettingsEndpoints
             batchOperationTimeoutSeconds = await settingsService.GetBatchOperationTimeoutSecondsAsync(),
             mcpEnabled = await settingsService.GetMcpEnabledAsync(),
             // The raw key is returned so the UI can display and edit it; empty string means no key.
-            mcpApiKey = await settingsService.GetMcpApiKeyAsync() ?? string.Empty
+            mcpApiKey = await settingsService.GetMcpApiKeyAsync() ?? string.Empty,
+            tourGuideCompletedStep = await settingsService.GetTourGuideCompletedStepAsync()
         };
     }
 }

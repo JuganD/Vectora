@@ -1,11 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { LogOut, RefreshCw, ChevronDown, Check, Menu, X, Settings } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity } from '../types';
-import { getConnections, getEntities, getQueueRuntimeInfo, getSubscriptionRuntimeInfo } from '../api/client';
+import { getConnections, getEntities, getQueueRuntimeInfo, getSubscriptionRuntimeInfo, getSettings, updateSettings } from '../api/client';
 import ConnectionManager from './ConnectionManager';
 import EntityBrowser from './EntityBrowser';
 import MessagePanel from './MessagePanel';
 import SettingsDialog from './SettingsDialog';
+import TourGuide, {
+  TOUR_STEPS,
+  TOUR_DUMMY_CONNECTION,
+  TOUR_DUMMY_CONNECTIONS,
+  TOUR_DUMMY_QUEUES,
+  TOUR_DUMMY_TOPICS,
+  TOUR_DUMMY_SELECTED_ENTITY,
+  TOUR_DUMMY_MESSAGES,
+  TOUR_ENTITY_BROWSER_FIRST_STEP,
+  TOUR_MESSAGE_PANEL_FIRST_STEP,
+  TOUR_LAST_DATA_STEP,
+  TOUR_MANAGE_CONNECTIONS_STEP,
+  TOUR_ENTITY_SWIPE_STEP,
+  TOUR_MESSAGE_VIEW_TABS_STEP,
+} from './TourGuide';
 
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
@@ -39,7 +54,13 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [showConnectionDropdown, setShowConnectionDropdown] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  const [tourInitialStep, setTourInitialStep] = useState(0);
+  const [tourCurrentStep, setTourCurrentStep] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the tour (not the user) opened the connection dropdown,
+  // so we can close it when the tour step changes away.
+  const tourControlledDropdownRef = useRef(false);
   const isMobile = useIsMobile();
 
   // Close mobile sidebar when entity is selected
@@ -153,6 +174,49 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     loadConnections();
   }, []);
 
+  // Load settings once to determine whether the tour should auto-start.
+  useEffect(() => {
+    getSettings().then(settings => {
+      const completed = settings.tourGuideCompletedStep;
+      if (completed < TOUR_STEPS.length) {
+        setTourInitialStep(completed);
+        setShowTour(true);
+      }
+    }).catch(() => { /* ignore – tour remains hidden */ });
+  }, []);
+
+  const handleTourComplete = useCallback(async () => {
+    setShowTour(false);
+    setTourCurrentStep(-1);
+    try {
+      await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
+    } catch {
+      // Non-critical; ignore
+    }
+  }, []);
+
+  const handleTourSkip = useCallback(async () => {
+    setShowTour(false);
+    setTourCurrentStep(-1);
+    try {
+      await updateSettings({ tourGuideCompletedStep: TOUR_STEPS.length });
+    } catch {
+      // Non-critical; ignore
+    }
+  }, []);
+
+  // Open the connection dropdown automatically on the manage-connections step so the
+  // spotlight can highlight the "Manage Connections…" button inside it.
+  useEffect(() => {
+    if (showTour && tourCurrentStep === TOUR_MANAGE_CONNECTIONS_STEP) {
+      setShowConnectionDropdown(true);
+      tourControlledDropdownRef.current = true;
+    } else if (tourControlledDropdownRef.current) {
+      setShowConnectionDropdown(false);
+      tourControlledDropdownRef.current = false;
+    }
+  }, [showTour, tourCurrentStep]);
+
   useEffect(() => {
     setSelectedEntity(null);
     const conn = selectedConnection;
@@ -174,6 +238,11 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (isMobile) return;
 
     const handleClickOutside = (e: MouseEvent) => {
+      // While the tour is driving the dropdown open (manage-connections step),
+      // ignore outside clicks so the spotlight target stays mounted. Clicking the
+      // tour overlay otherwise closes the dropdown, leaving the step with no
+      // target and re-showing it centered.
+      if (tourControlledDropdownRef.current) return;
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowConnectionDropdown(false);
       }
@@ -186,6 +255,44 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     localStorage.removeItem('vectora_token');
     onLogout();
   };
+
+  // ── Tour dummy-data injection ─────────────────────────────────────────────
+  // When the tour is active we override the real connection/entity/queue state
+  // with static fixtures so the UI shows fully-populated panels instead of
+  // empty-state placeholders. This is purely presentational — no real API calls
+  // are made with the dummy connection (id = -1).
+  const tourNeedsEntityBrowser =
+    showTour &&
+    tourCurrentStep >= TOUR_ENTITY_BROWSER_FIRST_STEP &&
+    tourCurrentStep <= TOUR_LAST_DATA_STEP;
+
+  const tourNeedsMessagePanel =
+    showTour &&
+    tourCurrentStep >= TOUR_MESSAGE_PANEL_FIRST_STEP &&
+    tourCurrentStep <= TOUR_LAST_DATA_STEP;
+
+  // Step-specific tour overrides
+  const tourIsManageConnections = showTour && tourCurrentStep === TOUR_MANAGE_CONNECTIONS_STEP;
+  const tourIsEntitySwipe = showTour && tourCurrentStep === TOUR_ENTITY_SWIPE_STEP;
+  const tourIsMessageViewTabs = showTour && tourCurrentStep === TOUR_MESSAGE_VIEW_TABS_STEP;
+
+  const effectiveConnection: Connection | null = tourNeedsEntityBrowser
+    ? TOUR_DUMMY_CONNECTION
+    : selectedConnection;
+
+  const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : queues;
+  const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : topics;
+  const effectiveSupportsManagement = tourNeedsEntityBrowser ? true : supportsManagement;
+
+  const effectiveSelectedEntity: SelectedEntity | null = tourNeedsMessagePanel
+    ? TOUR_DUMMY_SELECTED_ENTITY
+    : selectedEntity;
+
+  const tourDummyMessagesForPanel = tourNeedsMessagePanel ? TOUR_DUMMY_MESSAGES : undefined;
+
+  // Dropdown connections & selected item shown during the manage-connections step.
+  const dropdownConnections = tourIsManageConnections ? TOUR_DUMMY_CONNECTIONS : connections;
+  const dropdownSelectedId = tourIsManageConnections ? TOUR_DUMMY_CONNECTION.id : selectedConnection?.id;
 
   return (
     <div className="h-full bg-dark-950 flex flex-col overflow-hidden">
@@ -215,6 +322,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
           {/* Connection Selector - hidden on mobile (moved to sidebar) */}
           <div className="relative hidden md:block" ref={dropdownRef}>
             <button
+              data-tour="connection-selector"
               onClick={() => setShowConnectionDropdown(!showConnectionDropdown)}
               className="flex items-center gap-2 px-4 py-2 bg-dark-800 border border-dark-600 rounded-lg hover:border-dark-500 transition-colors min-w-[240px]"
             >
@@ -234,28 +342,28 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             {showConnectionDropdown && (
               <div className="absolute top-full left-0 mt-2 w-72 bg-dark-800 border border-dark-600 rounded-xl shadow-xl z-50 overflow-hidden">
                 <div className="max-h-80 overflow-auto">
-                  {connections.length === 0 ? (
+                  {dropdownConnections.length === 0 ? (
                     <div className="px-4 py-3 text-sm text-dark-400">No connections configured</div>
                   ) : (
-                    connections.map(conn => (
+                    dropdownConnections.map(conn => (
                       <button
                         key={conn.id}
-                        onClick={() => handleSelectConnection(conn)}
+                        onClick={() => { if (!tourIsManageConnections) handleSelectConnection(conn); }}
                         className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
-                          selectedConnection?.id === conn.id
+                          dropdownSelectedId === conn.id
                             ? 'bg-primary-500/20 border-l-2 border-primary-500'
                             : 'hover:bg-dark-700 border-l-2 border-transparent'
                         }`}
                       >
                         <div className="flex-1">
-                          <div className={`font-medium ${selectedConnection?.id === conn.id ? 'text-primary-400' : 'text-white'}`}>
+                          <div className={`font-medium ${dropdownSelectedId === conn.id ? 'text-primary-400' : 'text-white'}`}>
                             {conn.name}
                           </div>
                           <div className="text-xs text-dark-400 mt-0.5">
                             {conn.isEmulator ? 'Emulator' : 'Azure Service Bus'}
                           </div>
                         </div>
-                        {selectedConnection?.id === conn.id && (
+                        {dropdownSelectedId === conn.id && (
                           <Check className="w-4 h-4 text-primary-400" />
                         )}
                       </button>
@@ -264,6 +372,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
                 </div>
                 <div className="border-t border-dark-600 p-2">
                   <button
+                    data-tour="manage-connections"
                     onClick={() => { setShowConnectionDropdown(false); setShowConnectionManager(true); }}
                     className="w-full px-3 py-2 text-sm text-primary-400 hover:bg-dark-700 rounded-lg transition-colors"
                   >
@@ -289,6 +398,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         {/* Right side actions */}
         <div className="flex items-center gap-2 md:gap-4">
           <button
+            data-tour="settings-button"
             onClick={() => setShowSettings(true)}
             className="flex items-center gap-2 text-dark-400 hover:text-white transition-colors text-sm p-2 md:p-0"
             title="Settings"
@@ -319,7 +429,9 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         )}
 
         {/* Entity Browser - Left Panel / Mobile Drawer */}
-        <div className={`
+        <div
+          data-tour="entity-browser"
+          className={`
           ${isMobile
             ? `absolute inset-y-0 left-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-in-out ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full'}`
             : 'w-80 relative'
@@ -381,27 +493,30 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             </div>
           )}
           <EntityBrowser
-            connection={selectedConnection}
-            queues={queues}
-            topics={topics}
-            selectedEntity={selectedEntity}
+            connection={effectiveConnection}
+            queues={effectiveQueues}
+            topics={effectiveTopics}
+            selectedEntity={effectiveSelectedEntity}
             onSelectEntity={handleSelectEntity}
-            onRefresh={refreshEntities}
-            loading={loading}
-            canManage={supportsManagement}
+            onRefresh={tourNeedsEntityBrowser ? () => {} : refreshEntities}
+            loading={tourNeedsEntityBrowser ? false : loading}
+            canManage={effectiveSupportsManagement}
+            tourSwipeActive={tourIsEntitySwipe}
           />
         </div>
 
         {/* Message Panel - Right Panel / Full width on mobile */}
-        <div className="flex-1 overflow-hidden h-full">
+        <div data-tour="message-panel" className="flex-1 overflow-hidden h-full">
           <MessagePanel
-            connection={selectedConnection}
-            selectedEntity={selectedEntity}
-            queues={queues}
-            topics={topics}
-            onUpdateEntityCount={updateEntityCount}
+            connection={effectiveConnection}
+            selectedEntity={effectiveSelectedEntity}
+            queues={effectiveQueues}
+            topics={effectiveTopics}
+            onUpdateEntityCount={tourNeedsMessagePanel ? undefined : updateEntityCount}
             isMobile={isMobile}
             onOpenSidebar={() => setShowMobileSidebar(true)}
+            tourDummyMessages={tourDummyMessagesForPanel}
+            tourForcedViewMode={tourIsMessageViewTabs ? 'properties' : undefined}
           />
         </div>
       </div>
@@ -417,7 +532,20 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       )}
 
       {showSettings && (
-        <SettingsDialog onClose={() => setShowSettings(false)} />
+        <SettingsDialog
+          onClose={() => setShowSettings(false)}
+          onStartTour={() => { setShowSettings(false); setTourInitialStep(0); setShowTour(true); }}
+        />
+      )}
+
+      {showTour && (
+        <TourGuide
+          steps={TOUR_STEPS}
+          initialStep={tourInitialStep}
+          onComplete={handleTourComplete}
+          onSkip={handleTourSkip}
+          onStepChange={setTourCurrentStep}
+        />
       )}
     </div>
   );
