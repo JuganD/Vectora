@@ -238,6 +238,11 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (isMobile) return;
 
     const handleClickOutside = (e: MouseEvent) => {
+      // While the tour is driving the dropdown open (manage-connections step),
+      // ignore outside clicks so the spotlight target stays mounted. Clicking the
+      // tour overlay otherwise closes the dropdown, leaving the step with no
+      // target and re-showing it centered.
+      if (tourControlledDropdownRef.current) return;
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowConnectionDropdown(false);
       }

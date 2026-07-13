@@ -13,6 +13,11 @@ export interface TourStep {
   placement?: 'top' | 'bottom' | 'left' | 'right';
   // Extra padding around the highlighted element (default 8)
   spotlightPadding?: number;
+  // When true, the step is intentionally shown centered with no highlighted target
+  // (e.g. the welcome step). Target-bound steps leave this false so that a
+  // momentarily-missing target (e.g. a button inside a still-opening dropdown)
+  // does not flash a centered tooltip.
+  centered?: boolean;
 }
 
 interface Rect {
@@ -206,6 +211,12 @@ export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0, 
   }, [handleNext, handleSkip]);
 
   if (!currentStep) return null;
+
+  // Target-bound steps must not fall back to a centered tooltip: while their
+  // element is briefly absent (e.g. the "Manage Connections…" button before its
+  // dropdown finishes opening) we render nothing until the target appears,
+  // avoiding a stray centered copy of the same step.
+  if (!targetRect && !currentStep.centered) return null;
 
   const tooltipStyle = computeTooltipPosition(targetRect, currentStep.placement, padding);
 
@@ -434,6 +445,7 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'This quick tour will show you the key features. Press Next or click anywhere outside the highlighted area to advance, or Skip to exit the tour at any time.',
     placement: 'bottom',
+    centered: true,
   },
   {
     id: 'connection-selector',
@@ -469,6 +481,9 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Swipe a queue or topic row to the left to reveal the Edit and Delete action buttons. These allow you to modify entity properties or remove the entity entirely.',
     placement: 'right',
+    // No highlighted target — shown centered while an animated swipe hint plays
+    // over the entity list.
+    centered: true,
   },
   {
     id: 'message-panel',
