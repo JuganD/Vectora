@@ -444,6 +444,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     // Tour mode: use static dummy messages, no API calls.
     if (tourDummyMessages !== undefined) {
       setMessages(tourDummyMessages);
+      setSelectedMessage(tourDummyMessages[0] ?? null);
       setHasMore(false);
       return;
     }

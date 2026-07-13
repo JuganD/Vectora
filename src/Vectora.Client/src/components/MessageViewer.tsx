@@ -67,7 +67,7 @@ export default function MessageViewer({ message, onUseAsTemplate, viewMode: cont
     <div className="h-full flex flex-col min-h-0">
       {/* Toolbar - height matches MessagePanel counter bar */}
       <div className="px-3 h-[46px] border-b border-dark-700 flex items-center justify-between">
-        <div className="flex items-center gap-1 bg-dark-800 rounded-lg p-1">
+        <div data-tour="message-view-tabs" className="flex items-center gap-1 bg-dark-800 rounded-lg p-1">
           <button
             onClick={() => setViewMode('body')}
             className={`px-3 py-1 text-sm rounded-md transition-colors ${viewMode === 'body' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'}`}
@@ -201,4 +201,3 @@ function PropertyRow({ label, value }: { label: string; value?: string }) {
     </div>
   );
 }
-

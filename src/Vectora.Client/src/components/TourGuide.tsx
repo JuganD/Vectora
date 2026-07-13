@@ -456,6 +456,13 @@ export const TOUR_STEPS: TourStep[] = [
     placement: 'left',
   },
   {
+    id: 'message-view-tabs',
+    title: 'Message Body & Properties',
+    description:
+      'Open any message and use these tabs to switch between the raw message body and the full properties view, including application properties.',
+    placement: 'bottom',
+  },
+  {
     id: 'dlq-button',
     title: 'Dead Letter Queue',
     description:
