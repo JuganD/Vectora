@@ -337,6 +337,11 @@ export const TOUR_DUMMY_CONNECTION: Connection = {
   mcpAllowSend: false,
 };
 
+export const TOUR_DUMMY_CONNECTIONS: Connection[] = [
+  TOUR_DUMMY_CONNECTION,
+  { id: -2, name: 'dev-emulator', connectionString: '', isEmulator: true, mcpExposed: false, mcpAllowSend: false },
+];
+
 export const TOUR_DUMMY_QUEUES: QueueInfo[] = [
   { name: 'orders-queue', activeMessageCount: 42, deadLetterMessageCount: 3, isEmulator: false, requiresSession: false },
   { name: 'notifications', activeMessageCount: 0, deadLetterMessageCount: 0, isEmulator: false, requiresSession: false },
@@ -510,3 +515,6 @@ export const TOUR_STEPS: TourStep[] = [
 export const TOUR_ENTITY_BROWSER_FIRST_STEP = TOUR_STEPS.findIndex(s => s.id === 'entity-browser');
 export const TOUR_MESSAGE_PANEL_FIRST_STEP = TOUR_STEPS.findIndex(s => s.id === 'message-panel');
 export const TOUR_LAST_DATA_STEP = TOUR_STEPS.findIndex(s => s.id === 'message-search');
+export const TOUR_MANAGE_CONNECTIONS_STEP = TOUR_STEPS.findIndex(s => s.id === 'manage-connections');
+export const TOUR_ENTITY_SWIPE_STEP = TOUR_STEPS.findIndex(s => s.id === 'entity-swipe');
+export const TOUR_MESSAGE_VIEW_TABS_STEP = TOUR_STEPS.findIndex(s => s.id === 'message-view-tabs');

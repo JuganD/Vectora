@@ -15,6 +15,8 @@ interface EntityBrowserProps {
   onRefresh: () => void;
   loading: boolean;
   canManage: boolean;
+  // When true, the first entity item plays the swipe-demo animation (tour use).
+  tourSwipeActive?: boolean;
 }
 
 type CreateMode = null | 'queue' | 'topic' | 'subscription';
@@ -32,7 +34,7 @@ interface EditTarget {
   topicName?: string;
 }
 
-export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, canManage }: EntityBrowserProps) {
+export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, canManage, tourSwipeActive }: EntityBrowserProps) {
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [createMode, setCreateMode] = useState<CreateMode>(null);
@@ -318,6 +320,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   isEmulator={!canManage}
                   pending={pendingQueues.has(queue.name)}
                   tourId={idx === 0 ? 'entity-swipe' : undefined}
+                  tourSwipeAnimate={idx === 0 ? tourSwipeActive : undefined}
                 />
               ))}
               {filteredQueues.length === 0 && !searchTerm && (
@@ -496,9 +499,11 @@ interface EntityItemProps {
   isEmulator?: boolean;
   pending?: boolean;
   tourId?: string;
+  // When true, plays an automatic back-and-forth swipe animation to demo the gesture.
+  tourSwipeAnimate?: boolean;
 }
 
-function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending, tourId }: EntityItemProps) {
+function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending, tourId, tourSwipeAnimate }: EntityItemProps) {
   if (pending) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
@@ -520,6 +525,61 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
 
   const ACTION_WIDTH = 72; // Edit + Delete buttons
   const canSwipe = !isEmulator; // No swipe actions for emulator
+
+  // Tour swipe-demo: play an automatic open → close animation to show the gesture.
+  useEffect(() => {
+    if (!tourSwipeAnimate || !canSwipe) return;
+
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    const after = (ms: number, fn: () => void) => {
+      const id = setTimeout(() => { if (!cancelled) fn(); }, ms);
+      timers.push(id);
+    };
+
+    let acc = 0;
+    const step = (delay: number, fn: () => void) => { acc += delay; after(acc, fn); };
+
+    const runCycle = () => {
+      acc = 0;
+      step(500, () => {
+        didDragRef.current = true;
+        forceUpdate(n => n + 1);
+        if (contentRef.current) {
+          contentRef.current.style.transition = 'transform 380ms ease-in-out';
+          contentRef.current.style.transform = `translateX(-${ACTION_WIDTH}px)`;
+          dragXRef.current = -ACTION_WIDTH;
+        }
+      });
+      step(1000, () => {
+        if (contentRef.current) {
+          contentRef.current.style.transition = 'transform 380ms ease-in-out';
+          contentRef.current.style.transform = 'translateX(0px)';
+          dragXRef.current = 0;
+        }
+      });
+      step(400, () => {
+        didDragRef.current = false;
+        forceUpdate(n => n + 1);
+      });
+      step(700, runCycle);
+    };
+
+    runCycle();
+
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+      if (contentRef.current) {
+        contentRef.current.style.transition = '';
+        contentRef.current.style.transform = 'translateX(0px)';
+      }
+      dragXRef.current = 0;
+      didDragRef.current = false;
+      forceUpdate(n => n + 1);
+    };
+  }, [tourSwipeAnimate, canSwipe]);
 
   // Close when clicking outside
   useEffect(() => {
@@ -657,6 +717,18 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
           >
             <Trash2 className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Animated swipe-hint arrow shown during the tour */}
+      {tourSwipeAnimate && !showActions && (
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-end pr-2 z-10">
+          <span
+            className="text-primary-300 font-bold text-base select-none"
+            style={{ animation: 'tourSwipeHint 1.5s ease-in-out infinite' }}
+          >
+            ←
+          </span>
         </div>
       )}
 

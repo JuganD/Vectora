@@ -19,6 +19,8 @@ interface MessagePanelProps {
   // When set, the panel uses these messages instead of loading from the API
   // (used during the tour to show dummy data without a real connection).
   tourDummyMessages?: ServiceBusMessage[];
+  // When set, forces the message-detail tab to this mode (used during the tour).
+  tourForcedViewMode?: 'body' | 'properties';
 }
 
 // Case-insensitive substring match across a message's searchable fields, including its
@@ -55,7 +57,7 @@ function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
   return false;
 }
 
-export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages }: MessagePanelProps) {
+export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages, tourForcedViewMode }: MessagePanelProps) {
   useDateFormat(); // re-render session timestamps when the date format setting changes
   // Mobile view state: 'list' shows message list, 'detail' shows message detail
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
@@ -1125,7 +1127,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
               <MessageViewer
                 message={selectedMessage}
                 onUseAsTemplate={(msg) => { setTemplateMessage(msg); setShowSendDialog(true); }}
-                viewMode={detailsTab}
+                viewMode={tourForcedViewMode ?? detailsTab}
                 onViewModeChange={setDetailsTab}
               />
             </>
