@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, BookOpen, Search, Settings } from 'lucide-react';
+import { X, BookOpen } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage } from '../types';
 
 export interface TourStep {
@@ -13,8 +13,6 @@ export interface TourStep {
   placement?: 'top' | 'bottom' | 'left' | 'right';
   // Extra padding around the highlighted element (default 8)
   spotlightPadding?: number;
-  // Optional illustration rendered in the tooltip for visual context.
-  illustration?: ReactNode;
 }
 
 interface Rect {
@@ -297,13 +295,6 @@ export default function TourGuide({ steps, onComplete, onSkip, initialStep = 0, 
         {/* Description */}
         <p className="text-xs text-dark-300 mb-3 leading-relaxed">{currentStep.description}</p>
 
-        {/* Illustration */}
-        {currentStep.illustration && (
-          <div className="mb-3 rounded-lg overflow-hidden border border-dark-700 bg-dark-900">
-            {currentStep.illustration}
-          </div>
-        )}
-
         {/* Footer: step counter + navigation */}
         <div className="flex items-center justify-between">
           <span className="text-xs text-dark-500">
@@ -421,22 +412,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'This quick tour will show you the key features. Press Next or click anywhere outside the highlighted area to advance, or Skip to exit the tour at any time.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-3 flex items-center justify-center gap-6 text-[10px]">
-        <div className="flex flex-col items-center gap-1">
-          <kbd className="px-1.5 py-0.5 bg-dark-700 border border-dark-600 rounded text-dark-200 font-mono text-[10px]">→</kbd>
-          <span className="text-dark-500">Next step</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <div className="px-1.5 py-0.5 bg-dark-700 border border-dark-600 rounded text-dark-200 text-[9px]">click</div>
-          <span className="text-dark-500">Next step</span>
-        </div>
-        <div className="flex flex-col items-center gap-1">
-          <kbd className="px-1.5 py-0.5 bg-dark-700 border border-dark-600 rounded text-dark-200 font-mono text-[10px]">Esc</kbd>
-          <span className="text-dark-500">Skip tour</span>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'connection-selector',
@@ -444,18 +419,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click here to switch between your configured Service Bus connections. The currently active connection is shown with its name and type.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="flex items-center gap-2 px-3 py-2 bg-dark-700 border border-primary-500/60 rounded-lg ring-1 ring-primary-400/30">
-          <div className="w-2 h-2 rounded-full bg-primary-500 flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-white font-medium truncate">prod-servicebus</p>
-            <p className="text-[9px] text-dark-400">Azure Service Bus</p>
-          </div>
-          <span className="text-dark-400 text-[10px] flex-shrink-0">▾</span>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'manage-connections',
@@ -463,22 +426,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click "Manage Connections…" inside the dropdown to add, edit or delete Service Bus connections. Both real Azure Service Bus and local emulators are supported.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-3 py-2 flex items-center gap-2 bg-dark-700/60">
-            <div className="w-1.5 h-1.5 rounded-full bg-primary-500 flex-shrink-0" />
-            <span className="text-white">prod-servicebus</span>
-            <span className="ml-auto text-primary-400 text-[9px]">active</span>
-          </div>
-          <div className="px-3 py-2 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-dark-500 flex-shrink-0" />
-            <span className="text-dark-300">dev-emulator</span>
-          </div>
-          <div className="px-3 py-2 text-primary-400 font-medium">+ Manage Connections…</div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'entity-browser',
@@ -486,29 +433,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'This panel lists all queues and topics for the selected connection. Click any entity to open it in the message panel on the right.',
     placement: 'right',
-    illustration: (
-      <div className="p-2">
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-2 py-1 text-[9px] text-dark-500 uppercase tracking-wider bg-dark-900/40">Queues</div>
-          <div className="px-3 py-2 flex items-center gap-2 bg-primary-900/30">
-            <div className="w-1.5 h-1.5 rounded bg-primary-500 flex-shrink-0" />
-            <span className="text-white font-medium">orders-queue</span>
-            <span className="ml-auto text-primary-400 font-mono">42</span>
-          </div>
-          <div className="px-3 py-2 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded bg-dark-500 flex-shrink-0" />
-            <span className="text-dark-300">notifications</span>
-            <span className="ml-auto text-dark-500 font-mono">0</span>
-          </div>
-          <div className="px-2 py-1 text-[9px] text-dark-500 uppercase tracking-wider bg-dark-900/40">Topics</div>
-          <div className="px-3 py-2 flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded bg-dark-500 flex-shrink-0" />
-            <span className="text-dark-300">domain-events</span>
-            <span className="ml-auto text-dark-500 text-[9px]">3 subs</span>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'entity-search',
@@ -516,24 +440,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Type here to instantly filter queues and topics by name. The list updates as you type.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2 space-y-1.5">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-dark-700 border border-primary-500/60 rounded-lg text-[10px]">
-          <Search className="w-3 h-3 text-dark-400 flex-shrink-0" />
-          <span className="text-white">order</span>
-          <span className="inline-block w-px h-3 bg-primary-400" />
-        </div>
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-3 py-1.5 flex items-center bg-primary-900/30">
-            <span className="text-white">orders-queue</span>
-            <span className="ml-auto text-primary-400 font-mono">42</span>
-          </div>
-          <div className="px-3 py-1.5 flex items-center opacity-25">
-            <span className="text-dark-400">notifications</span>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'entity-swipe',
@@ -541,19 +447,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Swipe a queue or topic row to the left to reveal the Edit and Delete action buttons. These allow you to modify entity properties or remove the entity entirely.',
     placement: 'right',
-    illustration: (
-      <div className="p-2 text-[10px]">
-        <div className="flex items-stretch rounded-lg overflow-hidden border border-dark-600">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-dark-800">
-            <div className="w-1.5 h-1.5 rounded bg-primary-500 flex-shrink-0" />
-            <span className="text-white">orders-queue</span>
-            <span className="ml-auto text-dark-600 text-[8px] italic">← swipe</span>
-          </div>
-          <button className="px-3 flex items-center bg-primary-700 text-white font-medium border-l border-dark-600">Edit</button>
-          <button className="px-3 flex items-center bg-red-700 text-white font-medium">Del</button>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'message-panel',
@@ -561,31 +454,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'After selecting an entity, its messages appear here. You can peek the message list, view message details, and perform actions without affecting live consumers.',
     placement: 'left',
-    illustration: (
-      <div className="p-2">
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-3 py-2 flex items-start gap-2 bg-primary-900/30">
-            <div className="flex-1 min-w-0">
-              <p className="text-white font-medium truncate">Order #1042</p>
-              <p className="text-dark-400 truncate text-[9px]">{"{ \"status\": \"pending\", \"items\": 3 }"}</p>
-            </div>
-            <span className="text-[9px] text-dark-500 flex-shrink-0">2m ago</span>
-          </div>
-          <div className="px-3 py-2 flex items-start gap-2">
-            <div className="flex-1 min-w-0">
-              <p className="text-dark-300 truncate">Order #1041</p>
-              <p className="text-dark-500 truncate text-[9px]">{"{ \"status\": \"complete\" }"}</p>
-            </div>
-            <span className="text-[9px] text-dark-500 flex-shrink-0">5m ago</span>
-          </div>
-          <div className="px-3 py-2 flex items-start gap-2 opacity-50">
-            <div className="flex-1 min-w-0">
-              <p className="text-dark-400 truncate">Order #1040</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'dlq-button',
@@ -593,18 +461,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click "Switch to DLQ" to see messages that failed processing and ended up in the dead-letter queue. Switch back to the main queue with the same button.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Send</button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Consume</button>
-          <button className="px-2.5 py-1.5 bg-amber-800/40 border border-amber-600/60 rounded-lg text-amber-300 font-medium ring-1 ring-amber-500/30">
-            ⚠ Switch to DLQ
-          </button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Select</button>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'send-button',
@@ -612,27 +468,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click "Send" to compose and send a new message to this queue or topic. You can set the body, content type, headers, properties, and schedule delivery.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-          <button className="px-2.5 py-1.5 bg-primary-600 border border-primary-500 rounded-lg text-white font-medium ring-1 ring-primary-400/40 shadow-sm shadow-primary-500/20">
-            ↑ Send
-          </button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Consume</button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Switch to DLQ</button>
-        </div>
-        <div className="bg-dark-800 border border-dark-600 rounded-lg p-2 space-y-1.5">
-          <div className="flex gap-1.5 text-[9px]">
-            <span className="text-dark-500 w-14 flex-shrink-0">Body</span>
-            <span className="text-dark-300 font-mono">{"{ \"id\": 42 }"}</span>
-          </div>
-          <div className="flex gap-1.5 text-[9px]">
-            <span className="text-dark-500 w-14 flex-shrink-0">Subject</span>
-            <span className="text-dark-300">order-created</span>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'consume-button',
@@ -640,18 +475,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click "Consume" to receive and permanently remove messages from the queue or DLQ. Use this to drain test messages during development.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Send</button>
-          <button className="px-2.5 py-1.5 bg-red-800/40 border border-red-600/60 rounded-lg text-red-300 font-medium ring-1 ring-red-500/30">
-            ✕ Consume
-          </button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Switch to DLQ</button>
-          <button className="px-2.5 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-400">Select</button>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'select-mode-button',
@@ -659,28 +482,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click "Select" to enter multi-select mode. Tick individual messages and then batch-return them from DLQ, delete, or perform other bulk operations.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-3 py-2 flex items-center gap-2 bg-primary-900/30">
-            <div className="w-3 h-3 rounded border border-primary-500 bg-primary-500 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-[7px] font-bold leading-none">✓</span>
-            </div>
-            <span className="text-white">Order #1042</span>
-          </div>
-          <div className="px-3 py-2 flex items-center gap-2 bg-primary-900/20">
-            <div className="w-3 h-3 rounded border border-primary-500 bg-primary-500 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-[7px] font-bold leading-none">✓</span>
-            </div>
-            <span className="text-dark-200">Order #1041</span>
-          </div>
-          <div className="px-3 py-2 flex items-center gap-2">
-            <div className="w-3 h-3 rounded border border-dark-500 flex-shrink-0" />
-            <span className="text-dark-400">Order #1040</span>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'message-search',
@@ -688,24 +489,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Type here to search messages by body, subject, message ID, correlation ID, session ID, or any application property — without re-fetching from the server.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2 space-y-1.5">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-dark-700 border border-primary-500/60 rounded-lg text-[10px]">
-          <Search className="w-3 h-3 text-dark-400 flex-shrink-0" />
-          <span className="text-white">pending</span>
-          <span className="inline-block w-px h-3 bg-primary-400" />
-        </div>
-        <div className="bg-dark-800 border border-dark-600 rounded-lg overflow-hidden text-[10px] divide-y divide-dark-700">
-          <div className="px-3 py-1.5 flex items-center gap-2 bg-primary-900/30">
-            <span className="text-white">Order #1042</span>
-            <span className="ml-auto px-1 py-0.5 bg-primary-900 text-primary-300 text-[8px] rounded font-medium">match</span>
-          </div>
-          <div className="px-3 py-1.5 flex items-center opacity-25">
-            <span className="text-dark-400">Order #1041</span>
-          </div>
-        </div>
-      </div>
-    ),
   },
   {
     id: 'settings-button',
@@ -713,19 +496,6 @@ export const TOUR_STEPS: TourStep[] = [
     description:
       'Click Settings to configure the batch operation timeout, date format, and the built-in MCP server for AI agent access. You can also replay this tour at any time from the Settings dialog.',
     placement: 'bottom',
-    illustration: (
-      <div className="p-2">
-        <div className="flex items-center justify-end gap-2 px-1">
-          <button className="p-1.5 rounded-lg bg-dark-700 border border-dark-600 text-dark-400">
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-          <button className="p-1.5 rounded-lg bg-primary-600 border border-primary-500 text-white ring-1 ring-primary-400/50 shadow-sm shadow-primary-500/20">
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <p className="text-center text-[9px] text-primary-400 mt-1.5">← click the Settings button</p>
-      </div>
-    ),
   },
 ];
 
