@@ -125,6 +125,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // value that actually drives filtering, so keystrokes don't re-filter/re-render a huge list.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [enqueuedFromDate, setEnqueuedFromDate] = useState('');
+  const [enqueuedToDate, setEnqueuedToDate] = useState('');
   const [loadingAll, setLoadingAll] = useState(false);
   const loadAllRef = useRef(false);
   const loadAllRunIdRef = useRef(0);
@@ -280,21 +282,39 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     return () => clearTimeout(timer);
   }, [searchInput, searchQuery]);
 
-  // When a search is active and the flat list isn't fully loaded, drain the rest so the
-  // search runs against the whole entity.
+  const hasActiveFilters = !!searchQuery.trim() || !!enqueuedFromDate || !!enqueuedToDate;
+
+  // When a filter is active and the flat list isn't fully loaded, drain the rest so
+  // filtering runs against the whole entity.
   useEffect(() => {
-    if (searchQuery.trim() && hasMore && !sessionView && !loadAllRef.current) {
+    if (hasActiveFilters && hasMore && !sessionView && !loadAllRef.current) {
       loadAllRemaining();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, hasMore, sessionView]);
+  }, [hasActiveFilters, hasMore, sessionView]);
 
-  // Messages shown in the flat list, narrowed by the current search query.
+  // Messages shown in the flat list, narrowed by the current filters.
   const filteredMessages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return messages;
-    return messages.filter(m => messageMatchesSearch(m, q));
-  }, [messages, searchQuery]);
+    const from = enqueuedFromDate ? Date.parse(`${enqueuedFromDate}T00:00:00`) : Number.NEGATIVE_INFINITY;
+    const to = enqueuedToDate ? Date.parse(`${enqueuedToDate}T23:59:59.999`) : Number.POSITIVE_INFINITY;
+
+    if (!q && !enqueuedFromDate && !enqueuedToDate) return messages;
+
+    return messages.filter(m => {
+      if (q && !messageMatchesSearch(m, q)) return false;
+
+      const enqueuedTime = Date.parse(m.enqueuedTime);
+      if ((enqueuedFromDate || enqueuedToDate) && Number.isNaN(enqueuedTime)) {
+        return false;
+      }
+      if (!Number.isNaN(enqueuedTime) && (enqueuedTime < from || enqueuedTime > to)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [messages, searchQuery, enqueuedFromDate, enqueuedToDate]);
 
   // The flat list uses the filtered view; a drilled-in session reuses `messages` untouched.
   const listMessages = inSessionMessages ? messages : filteredMessages;
@@ -308,7 +328,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // stale, huge slice. Streaming appends during a drain keep the user's grown window intact.
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [searchQuery, connection, selectedEntity, showDeadLetter, sessionView, selectedSession]);
+  }, [searchQuery, enqueuedFromDate, enqueuedToDate, connection, selectedEntity, showDeadLetter, sessionView, selectedSession]);
 
 
   // Peek one page of messages and fold the per-session counts into the running list.
@@ -422,10 +442,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       return;
     }
     // Everything loaded is now shown; in non-search mode fetch the next server page.
-    if (!searchQuery.trim() && !loadingMore && !loadingAll && hasMore) {
+    if (!hasActiveFilters && !loadingMore && !loadingAll && hasMore) {
       loadMoreMessages();
     }
-  }, [hasHiddenRows, listMessages.length, searchQuery, loadingMore, loadingAll, hasMore]);
+  }, [hasHiddenRows, listMessages.length, hasActiveFilters, loadingMore, loadingAll, hasMore]);
 
   useEffect(() => {
     // Any change to the entity, connection, DLQ flag, or session toggle drops back to the
@@ -438,6 +458,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     setSelectedMessages(new Set());
     setSearchInput('');
     setSearchQuery('');
+    setEnqueuedFromDate('');
+    setEnqueuedToDate('');
     if (!connection || !selectedEntity) {
       setMessages([]);
       setSessions([]);
@@ -978,7 +1000,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                     <span className="text-sm text-dark-400 flex-shrink-0 min-w-[100px]">
                       {selectMode && selectedMessages.size > 0
                         ? `${selectedMessages.size} selected`
-                        : searchQuery.trim()
+                        : hasActiveFilters
                           ? `${filteredMessages.length.toLocaleString()} / ${messages.length.toLocaleString()}${loadingAll ? '+' : ''}`
                           : `${messages.length} messages`}
                     </span>
@@ -992,15 +1014,39 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                         placeholder="Search messages…"
                         className="w-full pl-7 pr-7 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
                       />
-                      {searchInput && (
+                     {(searchInput || enqueuedFromDate || enqueuedToDate) && (
                         <button
-                          onClick={() => { setSearchInput(''); setSearchQuery(''); }}
-                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
-                          title="Clear search"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                         onClick={() => {
+                           setSearchInput('');
+                           setSearchQuery('');
+                           setEnqueuedFromDate('');
+                           setEnqueuedToDate('');
+                         }}
+                         className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
+                         title="Clear filters"
+                       >
+                         <X className="w-3.5 h-3.5" />
+                       </button>
+                     )}
+                    </div>
+                    <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
+                     <input
+                       type="date"
+                       value={enqueuedFromDate}
+                       onChange={(e) => setEnqueuedFromDate(e.target.value)}
+                       className="w-32 px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                       title="Enqueued from date"
+                       aria-label="Enqueued from date"
+                     />
+                     <span className="text-xs text-dark-500">to</span>
+                     <input
+                       type="date"
+                       value={enqueuedToDate}
+                       onChange={(e) => setEnqueuedToDate(e.target.value)}
+                       className="w-32 px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                       title="Enqueued to date"
+                       aria-label="Enqueued to date"
+                     />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {selectMode && (
@@ -1037,19 +1083,23 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                           {inSessionMessages
                             ? 'No messages for this session in the scanned window'
                             : searchQuery.trim()
-                              ? `No messages match “${searchQuery.trim()}”`
+                              ? `No messages match search “${searchQuery.trim()}”`
+                              : (enqueuedFromDate || enqueuedToDate)
+                                ? 'No messages match the selected date range'
+                                : hasActiveFilters
+                                  ? 'No messages match the selected filters'
                               : 'No messages found'}
                         </p>
-                        {!inSessionMessages && searchQuery.trim() && loadingAll && (
+                        {!inSessionMessages && hasActiveFilters && loadingAll && (
                           <p className="text-xs text-dark-400 animate-pulse">Loading remaining messages…</p>
                         )}
                       </div>
                     ) : (
                       <div className="divide-y divide-dark-700">
                         {messageItems}
-                        {!inSessionMessages && searchQuery.trim() && loadingAll && (
+                        {!inSessionMessages && hasActiveFilters && loadingAll && (
                           <div className="flex items-center justify-center py-4 text-dark-400">
-                            <div className="animate-pulse">Searching all messages…</div>
+                            <div className="animate-pulse">Filtering all messages…</div>
                           </div>
                         )}
                         {!inSessionMessages && hasHiddenRows && (
@@ -1057,12 +1107,12 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                             Showing {visibleMessages.length.toLocaleString()} of {listMessages.length.toLocaleString()}
                           </div>
                         )}
-                        {!inSessionMessages && !searchQuery.trim() && !hasHiddenRows && loadingMore && (
+                        {!inSessionMessages && !hasActiveFilters && !hasHiddenRows && loadingMore && (
                           <div className="flex items-center justify-center py-4 text-dark-400">
                             <div className="animate-pulse">Loading more...</div>
                           </div>
                         )}
-                        {!inSessionMessages && !searchQuery.trim() && !hasHiddenRows && !hasMore && messages.length > 0 && (
+                        {!inSessionMessages && !hasActiveFilters && !hasHiddenRows && !hasMore && messages.length > 0 && (
                           <div className="flex items-center justify-center py-4 text-dark-500 text-sm">
                             No more messages
                           </div>
