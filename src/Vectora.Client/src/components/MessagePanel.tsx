@@ -5,6 +5,7 @@ import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, rece
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 import { formatDateTime, useDateFormat } from '../utils/dateFormat';
+import DatePicker from './DatePicker';
 
 const PANEL_RATIO_KEY = 'vectora_message_panel_ratio';
 
@@ -125,8 +126,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // value that actually drives filtering, so keystrokes don't re-filter/re-render a huge list.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [enqueuedFromDate, setEnqueuedFromDate] = useState('');
-  const [enqueuedToDate, setEnqueuedToDate] = useState('');
+  const [enqueuedFromDate, setEnqueuedFromDate] = useState<Date | null>(null);
+  const [enqueuedToDate, setEnqueuedToDate] = useState<Date | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
   const loadAllRef = useRef(false);
   const loadAllRunIdRef = useRef(0);
@@ -282,7 +283,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     return () => clearTimeout(timer);
   }, [searchInput, searchQuery]);
 
-  const hasActiveFilters = !!searchQuery.trim() || !!enqueuedFromDate || !!enqueuedToDate;
+  const hasActiveFilters = !!searchQuery.trim() || enqueuedFromDate !== null || enqueuedToDate !== null;
 
   // When a filter is active and the flat list isn't fully loaded, drain the rest so
   // filtering runs against the whole entity.
@@ -296,8 +297,12 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // Messages shown in the flat list, narrowed by the current filters.
   const filteredMessages = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const from = enqueuedFromDate ? Date.parse(`${enqueuedFromDate}T00:00:00`) : Number.NEGATIVE_INFINITY;
-    const to = enqueuedToDate ? Date.parse(`${enqueuedToDate}T23:59:59.999`) : Number.POSITIVE_INFINITY;
+    const from = enqueuedFromDate
+      ? new Date(enqueuedFromDate.getFullYear(), enqueuedFromDate.getMonth(), enqueuedFromDate.getDate(), 0, 0, 0, 0).getTime()
+      : Number.NEGATIVE_INFINITY;
+    const to = enqueuedToDate
+      ? new Date(enqueuedToDate.getFullYear(), enqueuedToDate.getMonth(), enqueuedToDate.getDate(), 23, 59, 59, 999).getTime()
+      : Number.POSITIVE_INFINITY;
 
     if (!q && !enqueuedFromDate && !enqueuedToDate) return messages;
 
@@ -458,8 +463,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     setSelectedMessages(new Set());
     setSearchInput('');
     setSearchQuery('');
-    setEnqueuedFromDate('');
-    setEnqueuedToDate('');
+    setEnqueuedFromDate(null);
+    setEnqueuedToDate(null);
     if (!connection || !selectedEntity) {
       setMessages([]);
       setSessions([]);
@@ -1014,13 +1019,13 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                         placeholder="Search messages…"
                         className="w-full pl-7 pr-7 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
                       />
-                     {(searchInput || enqueuedFromDate || enqueuedToDate) && (
+                     {(searchInput || enqueuedFromDate !== null || enqueuedToDate !== null) && (
                         <button
                          onClick={() => {
                            setSearchInput('');
                            setSearchQuery('');
-                           setEnqueuedFromDate('');
-                           setEnqueuedToDate('');
+                           setEnqueuedFromDate(null);
+                           setEnqueuedToDate(null);
                          }}
                          className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
                          title="Clear filters"
@@ -1030,22 +1035,18 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                      )}
                     </div>
                     <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
-                     <input
-                       type="date"
+                     <DatePicker
                        value={enqueuedFromDate}
-                       onChange={(e) => setEnqueuedFromDate(e.target.value)}
-                       className="w-32 px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                       onChange={setEnqueuedFromDate}
                        title="Enqueued from date"
-                       aria-label="Enqueued from date"
+                       ariaLabel="Enqueued from date"
                      />
                      <span className="text-xs text-dark-500">to</span>
-                     <input
-                       type="date"
+                     <DatePicker
                        value={enqueuedToDate}
-                       onChange={(e) => setEnqueuedToDate(e.target.value)}
-                       className="w-32 px-2 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                       onChange={setEnqueuedToDate}
                        title="Enqueued to date"
-                       aria-label="Enqueued to date"
+                       ariaLabel="Enqueued to date"
                      />
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">

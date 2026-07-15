@@ -82,3 +82,19 @@ export function formatDateTime(value: string | Date, format?: string): string {
   const fmt = format ?? currentFormat;
   return fmt === SYSTEM_FORMAT ? d.toLocaleString() : formatWithPattern(d, fmt);
 }
+
+/** Strips time tokens from a date-time pattern, leaving only the date portion. */
+function getDateOnlyPattern(pattern: string): string {
+  return pattern.replace(/\s*(?:HH|hh):mm:ss(?:\s+a)?/g, '').trim();
+}
+
+/**
+ * Formats a date (date portion only, no time) using the user's chosen format.
+ * Components should call useDateFormat() so they re-render when the preference changes.
+ */
+export function formatDate(value: string | Date, format?: string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  const fmt = format ?? currentFormat;
+  return fmt === SYSTEM_FORMAT ? d.toLocaleDateString() : formatWithPattern(d, getDateOnlyPattern(fmt));
+}
