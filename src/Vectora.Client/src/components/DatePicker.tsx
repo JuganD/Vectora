@@ -27,6 +27,10 @@ export default function DatePicker({ value, onChange, placeholder = 'Pick dateâ€
   const [open, setOpen] = useState(false);
   const [viewMonth, setViewMonth] = useState(() => startOfDay(value ?? new Date()));
   const containerRef = useRef<HTMLDivElement>(null);
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: currentYear - 1969 }, (_, i) => currentYear + 1 - i);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -60,6 +64,27 @@ export default function DatePicker({ value, onChange, placeholder = 'Pick dateâ€
 
   const pickDay = (day: Date) => {
     onChange(startOfDay(day));
+    setOpen(false);
+  };
+
+  const applyPreset = (preset: 'lastMonth' | 'lastWeek' | 'yesterday' | 'today') => {
+    const base = startOfDay(new Date());
+    const next = new Date(base);
+
+    if (preset === 'lastMonth') {
+      const originalDay = next.getDate();
+      next.setMonth(next.getMonth() - 1);
+      // Clamp overflowed dates (for example, Mar 31 -> Feb 28/29).
+      if (next.getDate() !== originalDay) {
+        next.setDate(0);
+      }
+    } else if (preset === 'lastWeek') {
+      next.setDate(next.getDate() - 7);
+    } else if (preset === 'yesterday') {
+      next.setDate(next.getDate() - 1);
+    }
+
+    onChange(startOfDay(next));
     setOpen(false);
   };
 
@@ -115,9 +140,34 @@ export default function DatePicker({ value, onChange, placeholder = 'Pick dateâ€
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="text-sm font-semibold text-white">
-                {MONTHS[viewMonth.getMonth()]} {viewMonth.getFullYear()}
-              </span>
+              <div className="flex items-center justify-center gap-0.5 px-1">
+                <select
+                  value={viewMonth.getMonth()}
+                  onChange={(e) => {
+                    const month = Number(e.target.value);
+                    setViewMonth(m => new Date(m.getFullYear(), month, 1));
+                  }}
+                  className="bg-transparent border-0 text-sm font-semibold text-white rounded-md px-1 py-0.5 hover:bg-dark-700 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+                  aria-label="Select month"
+                >
+                  {MONTHS.map((month, index) => (
+                    <option key={month} value={index}>{month}</option>
+                  ))}
+                </select>
+                <select
+                  value={viewMonth.getFullYear()}
+                  onChange={(e) => {
+                    const year = Number(e.target.value);
+                    setViewMonth(m => new Date(year, m.getMonth(), 1));
+                  }}
+                  className="bg-transparent border-0 text-sm font-semibold text-white rounded-md px-1 py-0.5 hover:bg-dark-700 focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+                  aria-label="Select year"
+                >
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={() => setViewMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
@@ -160,13 +210,34 @@ export default function DatePicker({ value, onChange, placeholder = 'Pick dateâ€
               })}
             </div>
 
-            <div className="mt-3 flex justify-end">
+            <div className="mt-3 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
-                className="px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white rounded-lg text-sm transition-colors"
+                onClick={() => applyPreset('lastMonth')}
+                className="px-2.5 py-1.5 bg-dark-700 hover:bg-dark-600 text-dark-100 rounded-lg text-xs transition-colors"
               >
-                Done
+                Last month
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('lastWeek')}
+                className="px-2.5 py-1.5 bg-dark-700 hover:bg-dark-600 text-dark-100 rounded-lg text-xs transition-colors"
+              >
+                Last week
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('yesterday')}
+                className="px-2.5 py-1.5 bg-dark-700 hover:bg-dark-600 text-dark-100 rounded-lg text-xs transition-colors"
+              >
+                Yesterday
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('today')}
+                className="px-2.5 py-1.5 bg-primary-500 hover:bg-primary-400 text-white rounded-lg text-xs transition-colors"
+              >
+                Today
               </button>
             </div>
           </div>
