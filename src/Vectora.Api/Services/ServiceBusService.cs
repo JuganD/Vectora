@@ -397,23 +397,36 @@ public class ServiceBusService : IServiceBusService
             while (remaining > 0 && DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
             {
                 var batchSize = Math.Min(remaining, 256);
-                // Receive from the front of the entity (FIFO by sequence number): the "first N".
-                var messages = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(5));
+                IReadOnlyList<ServiceBusReceivedMessage> messages;
+                try
+                {
+                    // Receive from the front of the entity (FIFO by sequence number): the "first N".
+                    messages = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(5), cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Consume is best-effort: if another consumer contends the entity and the receive
+                    // itself fails (link detached, transient AMQP error, etc.), stop and return what we
+                    // already consumed rather than surfacing an error for the whole operation.
+                    _logger.LogWarning(ex, "Receive failed while consuming from {Entity}; returning {Consumed} consumed so far", entityPath, consumed);
+                    break;
+                }
 
                 if (messages.Count == 0)
                     break;
 
                 // Complete the batch in parallel - a 200-message consume is ~1 round-trip instead of
                 // 200 sequential ones, so it finishes fast enough not to trip a client/proxy timeout.
-                // Count only messages that actually completed; lock-lost ones stay and are retried.
+                // Count only messages that actually completed; anything that fails (lock lost because
+                // another consumer grabbed it, already settled, etc.) is skipped best-effort.
                 var completeResults = await Task.WhenAll(messages.Select(async msg =>
                 {
                     try
                     {
-                        await receiver.CompleteMessageAsync(msg);
+                        await receiver.CompleteMessageAsync(msg, cancellationToken);
                         return true;
                     }
-                    catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.MessageLockLost)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         return false;
                     }
@@ -453,7 +466,19 @@ public class ServiceBusService : IServiceBusService
 
             while (sequenceSet.Count > 0 && DateTime.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
             {
-                var received = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(1));
+                IReadOnlyList<ServiceBusReceivedMessage> received;
+                try
+                {
+                    received = await receiver.ReceiveMessagesAsync(batchSize, TimeSpan.FromSeconds(1), cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Best-effort: if another consumer contends the entity and the receive fails, stop
+                    // and return what we already completed rather than failing the whole operation.
+                    _logger.LogWarning(ex, "Receive failed while deleting by sequence from {Entity}; returning {Completed} completed so far", entityPath, completed);
+                    break;
+                }
+
                 if (received.Count == 0)
                 {
                     break;
@@ -475,13 +500,35 @@ public class ServiceBusService : IServiceBusService
                     }
                 }
 
-                // Complete and abandon in parallel for speed
-                var tasks = new List<Task>();
-                tasks.AddRange(toComplete.Select(m => receiver.CompleteMessageAsync(m)));
-                tasks.AddRange(toAbandon.Select(m => receiver.AbandonMessageAsync(m)));
-                await Task.WhenAll(tasks);
+                // Complete and abandon in parallel for speed. Both are best-effort: a message whose lock
+                // was lost to another consumer (or already settled) is skipped rather than aborting the
+                // batch. Count only messages that actually completed.
+                var completeResults = await Task.WhenAll(toComplete.Select(async m =>
+                {
+                    try
+                    {
+                        await receiver.CompleteMessageAsync(m, cancellationToken);
+                        return true;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        return false;
+                    }
+                }));
 
-                completed += toComplete.Count;
+                await Task.WhenAll(toAbandon.Select(async m =>
+                {
+                    try
+                    {
+                        await receiver.AbandonMessageAsync(m, cancellationToken: cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Abandoning a lock we no longer hold is harmless; ignore.
+                    }
+                }));
+
+                completed += completeResults.Count(ok => ok);
             }
             return completed;
         }
