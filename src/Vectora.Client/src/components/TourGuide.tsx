@@ -363,11 +363,12 @@ export const TOUR_DUMMY_CONNECTION: Connection = {
   isEmulator: false,
   mcpExposed: false,
   mcpAllowSend: false,
+  sortOrder: 0,
 };
 
 export const TOUR_DUMMY_CONNECTIONS: Connection[] = [
   TOUR_DUMMY_CONNECTION,
-  { id: -2, name: 'dev-emulator', connectionString: '', isEmulator: true, mcpExposed: false, mcpAllowSend: false },
+  { id: -2, name: 'dev-emulator', connectionString: '', isEmulator: true, mcpExposed: false, mcpAllowSend: false, sortOrder: 1 },
 ];
 
 export const TOUR_DUMMY_QUEUES: QueueInfo[] = [

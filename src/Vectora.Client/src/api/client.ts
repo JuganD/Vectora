@@ -84,6 +84,8 @@ export const deleteConnection = (id: number) =>
   fetchApi<void>(`/connections/${id}`, { method: 'DELETE' });
 export const updateConnectionMcpFlags = (id: number, mcpExposed: boolean, mcpAllowSend: boolean) =>
   fetchApi<Connection>(`/connections/${id}/mcp`, { method: 'PUT', body: JSON.stringify({ mcpExposed, mcpAllowSend }) });
+export const reorderConnections = (orderedIds: number[]) =>
+  fetchApi<void>('/connections/reorder', { method: 'PUT', body: JSON.stringify({ orderedIds }) });
 
 // Emulator configs
 export const getEmulatorConfigs = () => fetchApi<EmulatorConfig[]>('/emulator-configs');

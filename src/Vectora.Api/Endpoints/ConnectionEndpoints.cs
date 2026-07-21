@@ -27,6 +27,9 @@ public static class ConnectionEndpoints
 
         group.MapPut("/{id:int}/mcp", UpdateMcpFlags)
             .WithName("UpdateConnectionMcpFlags");
+
+        group.MapPut("/reorder", Reorder)
+            .WithName("ReorderConnections");
     }
 
     private static async Task<IResult> GetAll(IConnectionRepository connectionRepository)
@@ -115,6 +118,17 @@ public static class ConnectionEndpoints
         return Results.Ok(ToDto(connection));
     }
 
+    private static async Task<IResult> Reorder(ReorderConnectionsDto dto, IConnectionRepository connectionRepository)
+    {
+        if (dto.OrderedIds == null || dto.OrderedIds.Count == 0)
+        {
+            return Results.BadRequest(new { error = "orderedIds is required" });
+        }
+
+        await connectionRepository.ReorderAsync(dto.OrderedIds);
+        return Results.NoContent();
+    }
+
     private static ConnectionDto ToDto(ServiceBusConnection c) => new()
     {
         Id = c.Id,
@@ -123,7 +137,8 @@ public static class ConnectionEndpoints
         IsEmulator = c.IsEmulator,
         EmulatorConfigId = c.EmulatorConfigId,
         McpExposed = c.McpExposed,
-        McpAllowSend = c.McpAllowSend
+        McpAllowSend = c.McpAllowSend,
+        SortOrder = c.SortOrder
     };
 }
 

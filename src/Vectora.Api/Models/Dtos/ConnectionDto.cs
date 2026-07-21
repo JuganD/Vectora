@@ -9,4 +9,5 @@ public class ConnectionDto
     public int? EmulatorConfigId { get; set; }
     public bool McpExposed { get; set; }
     public bool McpAllowSend { get; set; }
+    public int SortOrder { get; set; }
 }

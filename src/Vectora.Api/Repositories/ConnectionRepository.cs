@@ -21,7 +21,8 @@ public class ConnectionRepository : IConnectionRepository
     public async Task<List<ServiceBusConnection>> GetAllAsync()
     {
         return await _db.Connections
-            .OrderBy(c => c.Name)
+            .OrderBy(c => c.SortOrder)
+            .ThenBy(c => c.Name)
             .ToListAsync();
     }
 
@@ -32,12 +33,18 @@ public class ConnectionRepository : IConnectionRepository
 
     public async Task<ServiceBusConnection> CreateAsync(string name, string connectionString, bool isEmulator, int? emulatorConfigId)
     {
+        // Append new connections at the end of the current ordering.
+        var maxSortOrder = await _db.Connections.AnyAsync()
+            ? await _db.Connections.MaxAsync(c => c.SortOrder)
+            : -1;
+
         var connection = new ServiceBusConnection
         {
             Name = name,
             ConnectionString = connectionString,
             IsEmulator = isEmulator,
-            EmulatorConfigId = emulatorConfigId
+            EmulatorConfigId = emulatorConfigId,
+            SortOrder = maxSortOrder + 1
         };
         _db.Connections.Add(connection);
         await _db.SaveChangesAsync();
@@ -84,6 +91,19 @@ public class ConnectionRepository : IConnectionRepository
 
         await _db.SaveChangesAsync();
         return connection;
+    }
+
+    public async Task ReorderAsync(IReadOnlyList<int> orderedIds)
+    {
+        var connections = await _db.Connections.ToDictionaryAsync(c => c.Id);
+        for (var i = 0; i < orderedIds.Count; i++)
+        {
+            if (connections.TryGetValue(orderedIds[i], out var connection))
+            {
+                connection.SortOrder = i;
+            }
+        }
+        await _db.SaveChangesAsync();
     }
 
     public async Task<bool> DeleteAsync(int id)

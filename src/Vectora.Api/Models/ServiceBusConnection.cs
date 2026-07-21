@@ -12,5 +12,8 @@ public class ServiceBusConnection
     public bool McpExposed { get; set; }
     public bool McpAllowSend { get; set; }
 
+    // User-defined display order (ascending). Ties broken by Name for stability.
+    public int SortOrder { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

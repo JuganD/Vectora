@@ -6,6 +6,7 @@ export interface Connection {
   emulatorConfigId?: number;
   mcpExposed: boolean;
   mcpAllowSend: boolean;
+  sortOrder: number;
 }
 
 export interface QueueInfo {
