@@ -370,7 +370,25 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [searchHistoryOpen]);
 
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const closeHistory = () => setSearchHistoryOpen(false);
+    window.addEventListener('blur', closeHistory);
+    document.addEventListener('visibilitychange', closeHistory);
+    return () => {
+      window.removeEventListener('blur', closeHistory);
+      document.removeEventListener('visibilitychange', closeHistory);
+    };
+  }, [searchHistoryOpen]);
+
+  useEffect(() => {
+    if (searchHistoryOpen && (showSendDialog || showConsumePopup)) {
+      setSearchHistoryOpen(false);
+    }
+  }, [searchHistoryOpen, showSendDialog, showConsumePopup]);
+
   const handleSearchInputChange = (value: string) => {
+    setSearchHistoryOpen(false);
     if (value.length < searchInput.length) {
       if (!searchDeletingRef.current) {
         saveSearchTerm(searchInput);
@@ -577,6 +595,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     setSelectedSession(null);
     setSelectedMessage(null);
     setSelectedMessages(new Set());
+    setSearchHistoryOpen(false);
     setSearchInput('');
     setSearchQuery('');
     setEnqueuedFromDate(null);

@@ -137,6 +137,23 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   }, [searchHistoryOpen]);
 
   useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const closeHistory = () => setSearchHistoryOpen(false);
+    window.addEventListener('blur', closeHistory);
+    document.addEventListener('visibilitychange', closeHistory);
+    return () => {
+      window.removeEventListener('blur', closeHistory);
+      document.removeEventListener('visibilitychange', closeHistory);
+    };
+  }, [searchHistoryOpen]);
+
+  useEffect(() => {
+    if (searchHistoryOpen && (createMode !== null || deleteTarget !== null || editTarget !== null)) {
+      setSearchHistoryOpen(false);
+    }
+  }, [searchHistoryOpen, createMode, deleteTarget, editTarget]);
+
+  useEffect(() => {
     const trimmed = searchTerm.trim();
     if (!trimmed) return;
     const timer = setTimeout(() => {
@@ -146,6 +163,7 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   }, [searchTerm, saveSearchTerm]);
 
   const handleSearchChange = (value: string) => {
+    setSearchHistoryOpen(false);
     if (value.length < searchTerm.length) {
       if (!searchDeletingRef.current) {
         saveSearchTerm(searchTerm);
