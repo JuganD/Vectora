@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search, GripVertical, Star, History } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo, SearchHistoryEntry } from '../types';
-import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite } from '../api/client';
+import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite, deleteSearchHistory } from '../api/client';
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 import { formatDateTime, useDateFormat } from '../utils/dateFormat';
@@ -145,6 +145,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const loadAllRunIdRef = useRef(0);
   const messagesRef = useRef<ServiceBusMessage[]>([]);
   const hasMoreRef = useRef(true);
+  const searchInputRef = useRef('');
   const searchHistoryContainerRef = useRef<HTMLDivElement>(null);
   const searchDeletingRef = useRef(false);
   // Client-side windowing: only render this many rows at a time and grow on scroll, so a huge
@@ -248,6 +249,15 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           : entry)));
     } catch (error) {
       console.error('Failed to update message search favorite:', error);
+    }
+  }, []);
+
+  const deleteHistoryEntry = useCallback(async (term: string) => {
+    try {
+      await deleteSearchHistory(MESSAGE_SEARCH_KEY, term);
+      setSearchHistory(prev => prev.filter(entry => entry.term !== term));
+    } catch (error) {
+      console.error('Failed to delete message search history entry:', error);
     }
   }, []);
 
@@ -365,6 +375,19 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     }
     setSearchInput(value);
   };
+
+  useEffect(() => {
+    searchInputRef.current = searchInput;
+  }, [searchInput]);
+
+  useEffect(() => {
+    return () => {
+      const trimmed = searchInputRef.current.trim();
+      if (trimmed) {
+        void saveSearchTerm(trimmed);
+      }
+    };
+  }, [saveSearchTerm]);
 
   const hasActiveFilters = !!searchQuery.trim() || enqueuedFromDate !== null || enqueuedToDate !== null;
 
@@ -538,6 +561,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   useEffect(() => {
     // Any change to the entity, connection, DLQ flag, or session toggle drops back to the
     // session list (if in session view) or the flat message list, and clears selections.
+    const pendingSearchTerm = searchInputRef.current.trim();
+    if (pendingSearchTerm) {
+      void saveSearchTerm(pendingSearchTerm);
+    }
     loadAllRunIdRef.current += 1;
     loadAllRef.current = false;
     setLoadingAll(false);
@@ -1158,6 +1185,17 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                                  aria-label={entry.isFavorite ? `Unfavorite ${entry.term}` : `Favorite ${entry.term}`}
                                >
                                  <Star className={`w-3.5 h-3.5 ${entry.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                               </button>
+                               <button
+                                 type="button"
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   deleteHistoryEntry(entry.term);
+                                 }}
+                                 className="p-0.5 text-dark-400 hover:text-dark-200"
+                                 aria-label={`Delete ${entry.term} from history`}
+                               >
+                                 <X className="w-3.5 h-3.5" />
                                </button>
                              </div>
                            ))

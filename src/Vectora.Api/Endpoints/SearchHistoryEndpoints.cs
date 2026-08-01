@@ -17,6 +17,9 @@ public static class SearchHistoryEndpoints
 
         group.MapPut("/favorite", SetFavorite)
             .WithName("SetSearchHistoryFavorite");
+
+        group.MapDelete("/", DeleteSearch)
+            .WithName("DeleteSearchHistory");
     }
 
     private static async Task<IResult> GetByKey(Guid searchKey, ISearchHistoryService service)
@@ -55,6 +58,22 @@ public static class SearchHistoryEndpoints
         }
 
         return Results.Ok(MapToDto(entry));
+    }
+
+    private static async Task<IResult> DeleteSearch(Guid searchKey, string term, ISearchHistoryService service)
+    {
+        if (string.IsNullOrWhiteSpace(term))
+        {
+            return Results.BadRequest(new { error = "Search term is required" });
+        }
+
+        var deleted = await service.DeleteAsync(searchKey, term);
+        if (!deleted)
+        {
+            return Results.NotFound();
+        }
+
+        return Results.NoContent();
     }
 
     private static SearchHistoryEntryDto MapToDto(SearchHistoryEntry entry)

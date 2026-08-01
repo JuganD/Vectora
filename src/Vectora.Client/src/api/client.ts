@@ -226,3 +226,5 @@ export const recordSearchHistory = (searchKey: string, term: string) =>
   fetchApi<SearchHistoryEntry>('/search-history', { method: 'POST', body: JSON.stringify({ searchKey, term }) });
 export const setSearchHistoryFavorite = (searchKey: string, term: string, isFavorite: boolean) =>
   fetchApi<SearchHistoryEntry>('/search-history/favorite', { method: 'PUT', body: JSON.stringify({ searchKey, term, isFavorite }) });
+export const deleteSearchHistory = (searchKey: string, term: string) =>
+  fetchApi<void>(`/search-history?searchKey=${encodeURIComponent(searchKey)}&term=${encodeURIComponent(term)}`, { method: 'DELETE' });

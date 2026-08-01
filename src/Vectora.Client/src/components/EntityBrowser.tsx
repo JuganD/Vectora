@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X, Trash2, Pencil, Loader2, Star, History } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SubscriptionInfo, SelectedEntity, SearchHistoryEntry } from '../types';
-import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite } from '../api/client';
+import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite, deleteSearchHistory } from '../api/client';
 import EditEntityDialog from './EditEntityDialog';
 
 const subscriptionKey = (topicName: string, subName: string) => `${topicName}/${subName}`;
@@ -102,6 +102,15 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
           : entry)));
     } catch (err) {
       console.error('Failed to update entity search favorite:', err);
+    }
+  }, []);
+
+  const deleteHistoryEntry = useCallback(async (term: string) => {
+    try {
+      await deleteSearchHistory(ENTITY_SEARCH_KEY, term);
+      setSearchHistory(prev => prev.filter(entry => entry.term !== term));
+    } catch (err) {
+      console.error('Failed to delete entity search history entry:', err);
     }
   }, []);
 
@@ -397,6 +406,17 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                       aria-label={entry.isFavorite ? `Unfavorite ${entry.term}` : `Favorite ${entry.term}`}
                     >
                       <Star className={`w-3.5 h-3.5 ${entry.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteHistoryEntry(entry.term);
+                      }}
+                      className="p-0.5 text-dark-400 hover:text-dark-200"
+                      aria-label={`Delete ${entry.term} from history`}
+                    >
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ))
