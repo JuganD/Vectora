@@ -1149,6 +1149,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                      {(searchInput || enqueuedFromDate !== null || enqueuedToDate !== null) && (
                         <button
                          onClick={() => {
+                          if (searchInput.trim()) {
+                            void saveSearchTerm(searchInput);
+                            searchDeletingRef.current = true;
+                          }
                            setSearchInput('');
                            setSearchQuery('');
                            setEnqueuedFromDate(null);
