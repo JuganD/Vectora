@@ -62,8 +62,14 @@ function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
 function sortSearchHistoryEntries(entries: SearchHistoryEntry[]) {
   return [...entries].sort((a, b) => {
     if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
-    if (a.isFavorite) return a.term.localeCompare(b.term);
-    return new Date(b.lastSearchedAt).getTime() - new Date(a.lastSearchedAt).getTime();
+
+    // Match backend ordering semantics (favorites: alpha, case-insensitive)
+    if (a.isFavorite) return a.term.localeCompare(b.term, undefined, { sensitivity: 'base' });
+
+    // Non-favorites: newest-first, with term tiebreaker (case-insensitive)
+    const dateDiff = new Date(b.lastSearchedAt).getTime() - new Date(a.lastSearchedAt).getTime();
+    if (dateDiff !== 0) return dateDiff;
+    return a.term.localeCompare(b.term, undefined, { sensitivity: 'base' });
   });
 }
 
