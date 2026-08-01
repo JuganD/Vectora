@@ -31,6 +31,7 @@ builder.Services.AddScoped<IEmulatorConfigService, EmulatorConfigService>();
 builder.Services.AddScoped<IServiceBusService, ServiceBusService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
+builder.Services.AddScoped<ISearchHistoryService, SearchHistoryService>();
 
 builder.Services.AddHostedService<EntityCacheWarmupService>();
 
@@ -96,6 +97,7 @@ app.MapServiceBusEndpoints();
 app.MapServiceBusMessageEndpoints();
 app.MapSettingsEndpoints();
 app.MapMessageTemplateEndpoints();
+app.MapSearchHistoryEndpoints();
 
 // Fallback to index.html for SPA routing
 app.MapFallbackToFile("index.html");

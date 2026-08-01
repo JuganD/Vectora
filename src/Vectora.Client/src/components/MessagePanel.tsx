@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search, GripVertical } from 'lucide-react';
-import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo } from '../types';
-import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages } from '../api/client';
+import { Eye, Send, RefreshCw, Trash2, RotateCcw, Inbox, MessageSquare, Users, Skull, X, ChevronLeft, Menu, Layers, Clock, Search, GripVertical, Star, History } from 'lucide-react';
+import type { Connection, QueueInfo, TopicInfo, SelectedEntity, ServiceBusMessage, SessionInfo, SearchHistoryEntry } from '../types';
+import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, receiveSubscriptionMessages, returnQueueDeadLetter, returnSubscriptionDeadLetter, returnQueueDeadLetterBatch, returnSubscriptionDeadLetterBatch, receiveQueueDeadLetterBatch, receiveSubscriptionDeadLetterBatch, deleteQueueMessagesBatch, deleteSubscriptionMessagesBatch, cancelQueueScheduledBatch, scanQueueSessions, scanSubscriptionSessions, peekQueueSessionMessages, peekSubscriptionSessionMessages, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite } from '../api/client';
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 import { formatDateTime, useDateFormat } from '../utils/dateFormat';
 import DatePicker from './DatePicker';
 
 const PANEL_RATIO_KEY = 'vectora_message_panel_ratio';
+const MESSAGE_SEARCH_KEY = '1dc10436-8e90-454d-a3f2-6cc55124f270';
 
 interface MessagePanelProps {
   connection: Connection | null;
@@ -56,6 +57,14 @@ function messageMatchesSearch(m: ServiceBusMessage, q: string): boolean {
     }
   }
   return false;
+}
+
+function sortSearchHistoryEntries(entries: SearchHistoryEntry[]) {
+  return [...entries].sort((a, b) => {
+    if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+    if (a.isFavorite) return a.term.localeCompare(b.term);
+    return new Date(b.lastSearchedAt).getTime() - new Date(a.lastSearchedAt).getTime();
+  });
 }
 
 export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages, tourForcedViewMode }: MessagePanelProps) {
@@ -127,6 +136,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // value that actually drives filtering, so keystrokes don't re-filter/re-render a huge list.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
+  const [searchHistoryOpen, setSearchHistoryOpen] = useState(false);
   const [enqueuedFromDate, setEnqueuedFromDate] = useState<Date | null>(null);
   const [enqueuedToDate, setEnqueuedToDate] = useState<Date | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
@@ -134,6 +145,8 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const loadAllRunIdRef = useRef(0);
   const messagesRef = useRef<ServiceBusMessage[]>([]);
   const hasMoreRef = useRef(true);
+  const searchHistoryContainerRef = useRef<HTMLDivElement>(null);
+  const searchDeletingRef = useRef(false);
   // Client-side windowing: only render this many rows at a time and grow on scroll, so a huge
   // result set (e.g. thousands of matches) never builds thousands of DOM nodes at once.
   const [visibleCount, setVisibleCount] = useState(50);
@@ -205,6 +218,38 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       setLoading(false);
     }
   };
+
+  const loadSearchHistory = useCallback(async () => {
+    try {
+      const entries = await getSearchHistory(MESSAGE_SEARCH_KEY);
+      setSearchHistory(sortSearchHistoryEntries(entries));
+    } catch (error) {
+      console.error('Failed to load message search history:', error);
+    }
+  }, []);
+
+  const saveSearchTerm = useCallback(async (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    try {
+      await recordSearchHistory(MESSAGE_SEARCH_KEY, trimmed);
+      await loadSearchHistory();
+    } catch (error) {
+      console.error('Failed to save message search history:', error);
+    }
+  }, [loadSearchHistory]);
+
+  const toggleSearchFavorite = useCallback(async (term: string, isFavorite: boolean) => {
+    try {
+      await setSearchHistoryFavorite(MESSAGE_SEARCH_KEY, term, isFavorite);
+      setSearchHistory(prev => sortSearchHistoryEntries(prev.map(entry =>
+        entry.term === term
+          ? { ...entry, isFavorite, lastSearchedAt: new Date().toISOString() }
+          : entry)));
+    } catch (error) {
+      console.error('Failed to update message search favorite:', error);
+    }
+  }, []);
 
   const loadMoreMessages = async () => {
     if (!connection || !selectedEntity || loadingMore || loadingAll || !hasMore || messages.length === 0) return;
@@ -283,6 +328,43 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
     const timer = setTimeout(() => setSearchQuery(searchInput), 200);
     return () => clearTimeout(timer);
   }, [searchInput, searchQuery]);
+
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (!trimmed) return;
+    const timer = setTimeout(() => {
+      saveSearchTerm(trimmed);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [searchInput, saveSearchTerm]);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    loadSearchHistory();
+  }, [searchHistoryOpen, loadSearchHistory]);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!searchHistoryContainerRef.current?.contains(event.target as Node)) {
+        setSearchHistoryOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [searchHistoryOpen]);
+
+  const handleSearchInputChange = (value: string) => {
+    if (value.length < searchInput.length) {
+      if (!searchDeletingRef.current) {
+        saveSearchTerm(searchInput);
+      }
+      searchDeletingRef.current = true;
+    } else {
+      searchDeletingRef.current = false;
+    }
+    setSearchInput(value);
+  };
 
   const hasActiveFilters = !!searchQuery.trim() || enqueuedFromDate !== null || enqueuedToDate !== null;
 
@@ -1013,16 +1095,24 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                           ? `${filteredMessages.length.toLocaleString()} / ${messages.length.toLocaleString()}${loadingAll ? '+' : ''}`
                           : `${messages.length} messages`}
                     </span>
-                    <div className="relative flex-1 min-w-0 max-w-xs mx-auto">
+                    <div className="relative flex-1 min-w-0 max-w-xs mx-auto" ref={searchHistoryContainerRef}>
                       <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-dark-500 pointer-events-none" />
                       <input
                         data-tour="message-search"
                         type="text"
                         value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
+                        onChange={(e) => handleSearchInputChange(e.target.value)}
                         placeholder="Search messages…"
-                        className="w-full pl-7 pr-7 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
+                        className="w-full pl-7 pr-14 py-1 bg-dark-800 border border-dark-700 rounded text-xs text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/30"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setSearchHistoryOpen(prev => !prev)}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
+                        title="Search history"
+                      >
+                        <History className="w-3.5 h-3.5" />
+                      </button>
                      {(searchInput || enqueuedFromDate !== null || enqueuedToDate !== null) && (
                         <button
                          onClick={() => {
@@ -1031,11 +1121,48 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
                            setEnqueuedFromDate(null);
                            setEnqueuedToDate(null);
                          }}
-                         className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
+                        className="absolute right-6 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
                          title="Clear filters"
                        >
                          <X className="w-3.5 h-3.5" />
                        </button>
+                     )}
+                     {searchHistoryOpen && (
+                       <div className="absolute right-0 mt-1 w-72 bg-dark-800 border border-dark-600 rounded-lg shadow-lg z-20 max-h-64 overflow-y-auto">
+                         {searchHistory.length === 0 ? (
+                           <div className="px-3 py-2 text-xs text-dark-400">No search history yet</div>
+                         ) : (
+                           searchHistory.map(entry => (
+                             <div
+                               key={entry.term}
+                               className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-dark-200 hover:bg-dark-700/60"
+                             >
+                               <button
+                                 type="button"
+                                 onClick={() => {
+                                   setSearchInput(entry.term);
+                                   setSearchQuery(entry.term);
+                                   setSearchHistoryOpen(false);
+                                 }}
+                                 className="flex-1 truncate text-left"
+                               >
+                                 {entry.term}
+                               </button>
+                               <button
+                                 type="button"
+                                 onClick={(e) => {
+                                   e.stopPropagation();
+                                   toggleSearchFavorite(entry.term, !entry.isFavorite);
+                                 }}
+                                 className="p-0.5 text-dark-400 hover:text-yellow-400"
+                                 aria-label={entry.isFavorite ? `Unfavorite ${entry.term}` : `Favorite ${entry.term}`}
+                               >
+                                 <Star className={`w-3.5 h-3.5 ${entry.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                               </button>
+                             </div>
+                           ))
+                         )}
+                       </div>
                      )}
                     </div>
                     <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
