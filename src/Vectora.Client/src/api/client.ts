@@ -4,7 +4,7 @@ import type {
   EmulatorConfig, QueueProperties, TopicProperties, SubscriptionProperties,
   UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest,
   MessageTemplate, SaveMessageTemplateRequest,
-  SessionScanResult, SessionMessageScanResult
+  SessionScanResult, SessionMessageScanResult, SearchHistoryEntry
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -218,3 +218,13 @@ export const saveMessageTemplate = (data: SaveMessageTemplateRequest) =>
   fetchApi<MessageTemplate>('/message-templates', { method: 'POST', body: JSON.stringify(data) });
 export const deleteMessageTemplate = (id: number) =>
   fetchApi<void>(`/message-templates/${id}`, { method: 'DELETE' });
+
+// Search history
+export const getSearchHistory = (searchKey: string) =>
+  fetchApi<SearchHistoryEntry[]>(`/search-history/${encodeURIComponent(searchKey)}`);
+export const recordSearchHistory = (searchKey: string, term: string) =>
+  fetchApi<SearchHistoryEntry>('/search-history', { method: 'POST', body: JSON.stringify({ searchKey, term }) });
+export const setSearchHistoryFavorite = (searchKey: string, term: string, isFavorite: boolean) =>
+  fetchApi<SearchHistoryEntry>('/search-history/favorite', { method: 'PUT', body: JSON.stringify({ searchKey, term, isFavorite }) });
+export const deleteSearchHistory = (searchKey: string, term: string) =>
+  fetchApi<void>(`/search-history?searchKey=${encodeURIComponent(searchKey)}&term=${encodeURIComponent(term)}`, { method: 'DELETE' });

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X, Trash2, Pencil, Loader2 } from 'lucide-react';
-import type { Connection, QueueInfo, TopicInfo, SubscriptionInfo, SelectedEntity } from '../types';
-import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription } from '../api/client';
+import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X, Trash2, Pencil, Loader2, Star, History } from 'lucide-react';
+import type { Connection, QueueInfo, TopicInfo, SubscriptionInfo, SelectedEntity, SearchHistoryEntry } from '../types';
+import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite, deleteSearchHistory } from '../api/client';
 import EditEntityDialog from './EditEntityDialog';
 
 const subscriptionKey = (topicName: string, subName: string) => `${topicName}/${subName}`;
+const ENTITY_SEARCH_KEY = '5f0d2c2f-3d64-4f40-9e78-4f1a64d18ef3';
 
 interface EntityBrowserProps {
   connection: Connection | null;
@@ -37,6 +38,8 @@ interface EditTarget {
 export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, canManage, tourSwipeActive }: EntityBrowserProps) {
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
+  const [searchHistoryOpen, setSearchHistoryOpen] = useState(false);
   const [createMode, setCreateMode] = useState<CreateMode>(null);
   const [createName, setCreateName] = useState('');
   const [createTopicName, setCreateTopicName] = useState('');
@@ -59,6 +62,118 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
   const [optimisticQueues, setOptimisticQueues] = useState<QueueInfo[]>([]);
   const [optimisticTopics, setOptimisticTopics] = useState<TopicInfo[]>([]);
   const [optimisticSubscriptions, setOptimisticSubscriptions] = useState<Array<{ topicName: string; sub: SubscriptionInfo }>>([]);
+  const searchHistoryContainerRef = useRef<HTMLDivElement>(null);
+  const searchDeletingRef = useRef(false);
+
+  const sortHistoryEntries = (entries: SearchHistoryEntry[]) => {
+    return [...entries].sort((a, b) => {
+      if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+
+      // Match backend ordering semantics (favorites: alpha, case-insensitive)
+      if (a.isFavorite) return a.term.localeCompare(b.term, undefined, { sensitivity: 'base' });
+
+      // Non-favorites: newest-first, with term tiebreaker (case-insensitive)
+      const dateDiff = new Date(b.lastSearchedAt).getTime() - new Date(a.lastSearchedAt).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return a.term.localeCompare(b.term, undefined, { sensitivity: 'base' });
+    });
+  };
+
+  const loadSearchHistory = useCallback(async () => {
+    try {
+      const entries = await getSearchHistory(ENTITY_SEARCH_KEY);
+      setSearchHistory(sortHistoryEntries(entries));
+    } catch (err) {
+      console.error('Failed to load entity search history:', err);
+    }
+  }, []);
+
+  const saveSearchTerm = useCallback(async (term: string) => {
+    const trimmed = term.trim();
+    if (!trimmed) return;
+    try {
+      await recordSearchHistory(ENTITY_SEARCH_KEY, trimmed);
+      await loadSearchHistory();
+    } catch (err) {
+      console.error('Failed to save entity search history:', err);
+    }
+  }, [loadSearchHistory]);
+
+  const setFavorite = useCallback(async (term: string, isFavorite: boolean) => {
+    try {
+      await setSearchHistoryFavorite(ENTITY_SEARCH_KEY, term, isFavorite);
+      setSearchHistory(prev => sortHistoryEntries(prev.map(entry =>
+        entry.term === term
+          ? { ...entry, isFavorite, lastSearchedAt: new Date().toISOString() }
+          : entry)));
+    } catch (err) {
+      console.error('Failed to update entity search favorite:', err);
+    }
+  }, []);
+
+  const deleteHistoryEntry = useCallback(async (term: string) => {
+    try {
+      await deleteSearchHistory(ENTITY_SEARCH_KEY, term);
+      setSearchHistory(prev => prev.filter(entry => entry.term !== term));
+    } catch (err) {
+      console.error('Failed to delete entity search history entry:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    loadSearchHistory();
+  }, [searchHistoryOpen, loadSearchHistory]);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!searchHistoryContainerRef.current?.contains(event.target as Node)) {
+        setSearchHistoryOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [searchHistoryOpen]);
+
+  useEffect(() => {
+    if (!searchHistoryOpen) return;
+    const closeHistory = () => setSearchHistoryOpen(false);
+    window.addEventListener('blur', closeHistory);
+    document.addEventListener('visibilitychange', closeHistory);
+    return () => {
+      window.removeEventListener('blur', closeHistory);
+      document.removeEventListener('visibilitychange', closeHistory);
+    };
+  }, [searchHistoryOpen]);
+
+  useEffect(() => {
+    if (searchHistoryOpen && (createMode !== null || deleteTarget !== null || editTarget !== null)) {
+      setSearchHistoryOpen(false);
+    }
+  }, [searchHistoryOpen, createMode, deleteTarget, editTarget]);
+
+  useEffect(() => {
+    const trimmed = searchTerm.trim();
+    if (!trimmed) return;
+    const timer = setTimeout(() => {
+      saveSearchTerm(trimmed);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [searchTerm, saveSearchTerm]);
+
+  const handleSearchChange = (value: string) => {
+    setSearchHistoryOpen(false);
+    if (value.length < searchTerm.length) {
+      if (!searchDeletingRef.current) {
+        saveSearchTerm(searchTerm);
+      }
+      searchDeletingRef.current = true;
+    } else {
+      searchDeletingRef.current = false;
+    }
+    setSearchTerm(value);
+  };
 
   // Clear pending + optimistic state once a refresh completes — the server's
   // response is now authoritative for the entities we were waiting on.
@@ -267,16 +382,71 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Search - fixed height matches MessagePanel header */}
       <div className={`px-4 h-[73px] ${loading ? '' : 'border-b border-dark-700'} flex items-center relative`}>
-        <div className="relative flex-1">
+        <div className="relative flex-1" ref={searchHistoryContainerRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-dark-500" />
           <input
             data-tour="entity-search"
             type="text"
             placeholder="Search entities..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            onChange={e => handleSearchChange(e.target.value)}
+            className="w-full pl-9 pr-9 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-dark-400 hover:text-dark-200 transition-colors"
+            onClick={() => setSearchHistoryOpen(prev => !prev)}
+            title="Search history"
+          >
+            <History className="w-4 h-4" />
+          </button>
+          {searchHistoryOpen && (
+            <div className="absolute right-0 mt-1 w-full bg-dark-800 border border-dark-600 rounded-lg shadow-lg z-20 max-h-64 overflow-y-auto">
+              {searchHistory.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-dark-400">No search history yet</div>
+              ) : (
+                searchHistory.map(entry => (
+                  <div
+                    key={entry.term}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-dark-200 hover:bg-dark-700/60"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchTerm(entry.term);
+                        setSearchHistoryOpen(false);
+                      }}
+                      className="flex-1 truncate text-left"
+                    >
+                      {entry.term}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFavorite(entry.term, !entry.isFavorite);
+                      }}
+                      className="p-0.5 text-dark-400 hover:text-yellow-400"
+                      aria-label={entry.isFavorite ? `Unfavorite ${entry.term}` : `Favorite ${entry.term}`}
+                    >
+                      <Star className={`w-3.5 h-3.5 ${entry.isFavorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteHistoryEntry(entry.term);
+                      }}
+                      className="p-0.5 text-dark-400 hover:text-dark-200"
+                      aria-label={`Delete ${entry.term} from history`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
         {/* Loading wave replaces the border line */}
         {loading && (
@@ -978,4 +1148,3 @@ function SwipeableTopicItem({ name, subscriptionCount, isExpanded, isSelected, o
     </div>
   );
 }
-

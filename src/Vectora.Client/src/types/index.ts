@@ -241,3 +241,8 @@ export interface SaveMessageTemplateRequest {
   sendCount: number;
 }
 
+export interface SearchHistoryEntry {
+  term: string;
+  isFavorite: boolean;
+  lastSearchedAt: string;
+}
