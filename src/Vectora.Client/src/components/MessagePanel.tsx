@@ -79,6 +79,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const [selectMode, setSelectMode] = useState(false);
   const [detailsTab, setDetailsTab] = useState<'body' | 'properties'>('body');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const consumeSubmitInFlightRef = useRef(false);
 
   // Draggable splitter between the message list and the detail viewer (desktop only).
   // The ratio is the list panel's share of the container width, persisted across sessions.
@@ -571,8 +572,10 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
 
   const handleConsumeSubmit = async () => {
     if (!connection || !selectedEntity) return;
+    if (consumeSubmitInFlightRef.current) return;
     const count = clearAll ? 10000 : parseInt(consumeCount) || 0;
     if (count <= 0) return;
+    consumeSubmitInFlightRef.current = true;
     setLoading(true);
     setActionStatus(null);
     closeConsumePopup();
@@ -598,6 +601,7 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       const message = error instanceof Error ? error.message : 'Failed to consume messages.';
       setActionStatus({ kind: 'error', text: message });
     } finally {
+      consumeSubmitInFlightRef.current = false;
       setLoading(false);
     }
   };
