@@ -26,6 +26,7 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
   const [mcpApiKey, setMcpApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [initialConnections, setInitialConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -46,6 +47,7 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
       setMcpEnabled(settings.mcpEnabled);
       setMcpApiKey(settings.mcpApiKey);
       setConnections(conns);
+      setInitialConnections(conns);
     } catch (error) {
       console.error("Failed to load settings:", error);
     } finally {
@@ -53,25 +55,17 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
     }
   };
 
-  // Per-connection MCP flags persist immediately via their own endpoint.
-  const setConnectionFlags = async (
+  const setConnectionFlags = (
     conn: Connection,
     mcpExposed: boolean,
     mcpAllowSend: boolean
   ) => {
     const allowSend = mcpExposed && mcpAllowSend; // sending requires exposure
-    const previous = connections;
     setConnections((prev) =>
       prev.map((c) =>
         c.id === conn.id ? { ...c, mcpExposed, mcpAllowSend: allowSend } : c
       )
     );
-    try {
-      await updateConnectionMcpFlags(conn.id, mcpExposed, allowSend);
-    } catch (error) {
-      console.error("Failed to update connection MCP flags:", error);
-      setConnections(previous); // revert on failure
-    }
   };
 
   const handleSave = async () => {
@@ -84,6 +78,25 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
         mcpEnabled,
         mcpApiKey: mcpApiKey.trim(),
       });
+      const changedConnections = connections.filter((conn) => {
+        const initial = initialConnections.find((c) => c.id === conn.id);
+        return (
+          !initial ||
+          initial.mcpExposed !== conn.mcpExposed ||
+          initial.mcpAllowSend !== conn.mcpAllowSend
+        );
+      });
+
+      await Promise.all(
+        changedConnections.map((conn) =>
+          updateConnectionMcpFlags(
+            conn.id,
+            conn.mcpExposed,
+            conn.mcpExposed && conn.mcpAllowSend
+          )
+        )
+      );
+
       setBatchTimeout(updated.batchOperationTimeoutSeconds.toString());
       onClose();
     } catch (error) {
