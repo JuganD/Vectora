@@ -264,8 +264,8 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
                               <th className="text-left font-medium px-3 py-2">
                                 Connection
                               </th>
-                              <th className="font-medium px-3 py-2 w-20">Expose</th>
-                              <th className="font-medium px-3 py-2 w-24">Allow send</th>
+                              <th className="font-medium px-3 py-2 w-20">Read</th>
+                              <th className="font-medium px-3 py-2 w-24">Write</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -317,10 +317,6 @@ export default function SettingsDialog({ onClose, onStartTour }: SettingsDialogP
                         </table>
                       </div>
                     )}
-                    <p className="text-xs text-dark-500 mt-1">
-                      Unexposed connections are invisible to agents. Production stays hidden
-                      unless you check it here.
-                    </p>
                   </div>
                 </div>
               )}
