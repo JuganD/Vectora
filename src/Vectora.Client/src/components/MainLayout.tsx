@@ -27,6 +27,12 @@ const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
 
+// Entity names repeat across namespaces, so loaded-message counts are keyed per connection.
+const loadedCountKey = (connectionId: number, entity: SelectedEntity) =>
+  entity.type === 'subscription' && entity.topicName
+    ? `${connectionId}:sub:${entity.topicName}/${entity.name}`
+    : `${connectionId}:queue:${entity.name}`;
+
 // Emulator message counts are filled in by a background sweep on the server (browsing is far too
 // slow to hold a request open), so the first response can carry provisional numbers. Poll the cheap
 // cached endpoint until the server reports the sweep finished.
@@ -108,14 +114,17 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   }, []);
 
   // What the message panel has proved about an entity's counts by actually loading its messages.
-  // Keyed "queue:<name>" / "sub:<topic>/<name>", holding the active and dead-letter sub-queues
-  // separately because the panel only ever loads one of them at a time.
+  // Keyed "<connectionId>:queue:<name>" / "<connectionId>:sub:<topic>/<name>", holding the active
+  // and dead-letter sub-queues separately because the panel only loads one of them at a time. The
+  // connection id is part of the key because entity names repeat across namespaces — an emulator
+  // usually mirrors the real one — and these counts are only ever valid for the emulator.
   const [loadedCounts, setLoadedCounts] = useState<Record<string, { active?: MessageCount; deadLetter?: MessageCount }>>({});
 
   const handleMessagesLoaded = useCallback((entity: SelectedEntity, loaded: number, reachedEnd: boolean, deadLetter: boolean) => {
     // Real Service Bus reports exact counts from the admin API; only emulator counts need this.
-    if (!selectedConnectionRef.current?.isEmulator) return;
-    const key = entity.type === 'subscription' && entity.topicName ? `sub:${entity.topicName}/${entity.name}` : `queue:${entity.name}`;
+    const connection = selectedConnectionRef.current;
+    if (!connection?.isEmulator) return;
+    const key = loadedCountKey(connection.id, entity);
     setLoadedCounts(prev => ({
       ...prev,
       [key]: { ...prev[key], [deadLetter ? 'deadLetter' : 'active']: { count: loaded, isExact: reachedEnd } },
@@ -348,8 +357,12 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     ? TOUR_DUMMY_CONNECTION
     : selectedConnection;
 
-  const countedQueues: QueueInfo[] = useMemo(() => queues.map(queue => {
-    const loaded = loadedCounts[`queue:${queue.name}`];
+  // Only emulator counts are ever browse-derived; a real namespace's admin counts are exact and
+  // must never be overridden by what some other connection's message list happened to show.
+  const countsConnectionId = selectedConnection?.isEmulator ? selectedConnection.id : null;
+
+  const countedQueues: QueueInfo[] = useMemo(() => countsConnectionId == null ? queues : queues.map(queue => {
+    const loaded = loadedCounts[`${countsConnectionId}:queue:${queue.name}`];
     if (!loaded) return queue;
     const active = mergeMessageCount({ count: queue.activeMessageCount, isExact: queue.activeCountExact ?? true }, loaded.active);
     const dlq = mergeMessageCount({ count: queue.deadLetterMessageCount, isExact: queue.deadLetterCountExact ?? true }, loaded.deadLetter);
@@ -360,12 +373,12 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
       deadLetterMessageCount: dlq.count,
       deadLetterCountExact: dlq.isExact,
     };
-  }), [queues, loadedCounts]);
+  }), [queues, loadedCounts, countsConnectionId]);
 
-  const countedTopics: TopicInfo[] = useMemo(() => topics.map(topic => ({
+  const countedTopics: TopicInfo[] = useMemo(() => countsConnectionId == null ? topics : topics.map(topic => ({
     ...topic,
     subscriptions: topic.subscriptions.map(sub => {
-      const loaded = loadedCounts[`sub:${topic.name}/${sub.name}`];
+      const loaded = loadedCounts[`${countsConnectionId}:sub:${topic.name}/${sub.name}`];
       if (!loaded) return sub;
       const active = mergeMessageCount({ count: sub.activeMessageCount, isExact: sub.activeCountExact ?? true }, loaded.active);
       const dlq = mergeMessageCount({ count: sub.deadLetterMessageCount, isExact: sub.deadLetterCountExact ?? true }, loaded.deadLetter);
@@ -377,7 +390,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
         deadLetterCountExact: dlq.isExact,
       };
     }),
-  })), [topics, loadedCounts]);
+  })), [topics, loadedCounts, countsConnectionId]);
 
   const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : countedQueues;
   const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : countedTopics;
