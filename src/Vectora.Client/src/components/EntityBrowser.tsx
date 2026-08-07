@@ -481,11 +481,12 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   name={queue.name}
                   activeCount={queue.activeMessageCount}
                   deadLetterCount={queue.deadLetterMessageCount}
+                  activeCountExact={queue.activeCountExact ?? true}
+                  deadLetterCountExact={queue.deadLetterCountExact ?? true}
                   isSelected={selectedEntity?.type === 'queue' && selectedEntity.name === queue.name}
                   onClick={() => onSelectEntity({ type: 'queue', name: queue.name })}
                   onDelete={() => openDeleteDialog('queue', queue.name)}
                   onEdit={() => openEditDialog('queue', queue.name)}
-                  peekDerivedCounts={connection?.isEmulator ?? false}
                   pending={pendingQueues.has(queue.name)}
                   tourId={idx === 0 ? 'entity-swipe' : undefined}
                   tourSwipeAnimate={idx === 0 ? tourSwipeActive : undefined}
@@ -529,11 +530,12 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                           name={sub.name}
                           activeCount={sub.activeMessageCount}
                           deadLetterCount={sub.deadLetterMessageCount}
+                          activeCountExact={sub.activeCountExact ?? true}
+                          deadLetterCountExact={sub.deadLetterCountExact ?? true}
                           isSelected={selectedEntity?.type === 'subscription' && selectedEntity.name === sub.name && selectedEntity.topicName === topic.name}
                           onClick={() => onSelectEntity({ type: 'subscription', name: sub.name, topicName: topic.name })}
                           onDelete={() => openDeleteDialog('subscription', sub.name, topic.name)}
                           onEdit={() => openEditDialog('subscription', sub.name, topic.name)}
-                          peekDerivedCounts={connection?.isEmulator ?? false}
                           pending={pendingSubscriptions.has(subscriptionKey(topic.name, sub.name))}
                         />
                       ))}
@@ -657,26 +659,27 @@ interface EntityItemProps {
   name: string;
   activeCount: number;
   deadLetterCount: number;
+  // False when the count is a floor rather than a total, rendered "N+".
+  activeCountExact?: boolean;
+  deadLetterCountExact?: boolean;
   isSelected: boolean;
   onClick: () => void;
   onDelete: () => void;
   onEdit?: () => void;
-  // True when the counts came from the API's peek-based fallback and so may be capped.
-  peekDerivedCounts?: boolean;
   pending?: boolean;
   tourId?: string;
   // When true, plays an automatic back-and-forth swipe animation to demo the gesture.
   tourSwipeAnimate?: boolean;
 }
 
-function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, peekDerivedCounts = false, pending, tourId, tourSwipeAnimate }: EntityItemProps) {
+function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, activeCountExact = true, deadLetterCountExact = true, pending, tourId, tourSwipeAnimate }: EntityItemProps) {
   if (pending) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
         <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
         <span className="flex-1 truncate text-sm text-dark-400">{name}</span>
-        <span className="text-xs bg-dark-700 px-1.5 py-0.5 rounded text-dark-500">{formatMessageCount(activeCount, peekDerivedCounts)}</span>
-        <span className="text-xs bg-red-500/10 text-red-300/60 px-1.5 py-0.5 rounded">{formatMessageCount(deadLetterCount, peekDerivedCounts)}</span>
+        <span className="text-xs bg-dark-700 px-1.5 py-0.5 rounded text-dark-500">{formatMessageCount({ count: activeCount, isExact: activeCountExact })}</span>
+        <span className="text-xs bg-red-500/10 text-red-300/60 px-1.5 py-0.5 rounded">{formatMessageCount({ count: deadLetterCount, isExact: deadLetterCountExact })}</span>
       </div>
     );
   }
@@ -915,9 +918,9 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
       >
         {icon}
         <span className="flex-1 truncate text-sm">{name}</span>
-        <span className="text-xs bg-dark-600 px-1.5 py-0.5 rounded">{formatMessageCount(activeCount, peekDerivedCounts)}</span>
+        <span className="text-xs bg-dark-600 px-1.5 py-0.5 rounded">{formatMessageCount({ count: activeCount, isExact: activeCountExact })}</span>
         <span className={`text-xs px-1.5 py-0.5 rounded ${deadLetterCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-red-500/10 text-red-300'}`}>
-          {formatMessageCount(deadLetterCount, peekDerivedCounts)}
+          {formatMessageCount({ count: deadLetterCount, isExact: deadLetterCountExact })}
         </span>
       </div>
     </div>

@@ -11,15 +11,17 @@ public class ServiceBusService : IServiceBusService
     private readonly IConnectionRepository _connectionRepository;
     private readonly IServiceBusClientCache _clientCache;
     private readonly IServiceBusEntityCache _entityCache;
+    private readonly IEmulatorCountRefresher _countRefresher;
     private readonly ISettingsService _settingsService;
     private readonly ILogger<ServiceBusService> _logger;
     private readonly int _emulatorAdminPort;
 
-    public ServiceBusService(IConnectionRepository connectionRepository, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService, ILogger<ServiceBusService> logger, IConfiguration configuration)
+    public ServiceBusService(IConnectionRepository connectionRepository, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, IEmulatorCountRefresher countRefresher, ISettingsService settingsService, ILogger<ServiceBusService> logger, IConfiguration configuration)
     {
         _connectionRepository = connectionRepository;
         _clientCache = clientCache;
         _entityCache = entityCache;
+        _countRefresher = countRefresher;
         _settingsService = settingsService;
         _logger = logger;
         _emulatorAdminPort = configuration.GetValue<int?>("EmulatorAdminPort") ?? EmulatorAdmin.DefaultAdminPort;
@@ -55,21 +57,32 @@ public class ServiceBusService : IServiceBusService
 
         await PopulateFromAdminAsync(GetManagementClient(connection), connection, queues, topics, cancellationToken);
 
-        // The emulator enumerates entities correctly but reports every message count as zero, so
-        // its counts are the one thing that still has to be derived by browsing.
-        if (connection.IsEmulator)
-        {
-            await FillEmulatorCountsAsync(connection, queues, topics, cancellationToken);
-        }
-
         var orderedQueues = queues.OrderBy(q => q.Name).ToList();
         var orderedTopics = topics.OrderBy(t => t.Name).ToList();
+
+        if (connection.IsEmulator)
+        {
+            MarkCountsUnknown(orderedQueues, orderedTopics);
+        }
+
+        // Carry over the counts we already know. A fresh enumeration builds new DTOs, so without
+        // this every refresh would blank the counts until the sweep catches up.
+        if (connection.IsEmulator && _entityCache.TryGet(connectionId, out var previous))
+        {
+            CopyCounts(previous, orderedQueues, orderedTopics);
+        }
+
         _entityCache.Set(connectionId, orderedQueues, orderedTopics);
+
+        // Emulator counts come from browsing, which is too slow to hold a request open (see
+        // EmulatorCountRefresher). Cache first, then let the sweep fill the numbers in place.
+        _countRefresher.Trigger(connection);
+
         return (orderedQueues, orderedTopics);
     }
 
     // Enumerate entities and message counts through the administration client. Counts are accurate
-    // for real Service Bus; the emulator returns zeros, which FillEmulatorCountsAsync replaces.
+    // for real Service Bus; the emulator returns zeros, which EmulatorCountRefresher replaces.
     private static async Task PopulateFromAdminAsync(ServiceBusAdministrationClient adminClient, ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics, CancellationToken cancellationToken)
     {
         // RequiresSession lives on the entity properties (not the runtime properties that
@@ -102,57 +115,76 @@ public class ServiceBusService : IServiceBusService
         }
     }
 
-    // Replaces the emulator's always-zero runtime counts with peek-derived ones. See
-    // CountByPeekAsync for why this is necessary and what it costs.
-    private async Task FillEmulatorCountsAsync(ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics, CancellationToken cancellationToken)
+    // Emulator counts come from browsing, so a freshly enumerated entity has no count yet — the
+    // admin-reported zero it arrives with is meaningless and must not read as an exact total.
+    private static void MarkCountsUnknown(List<QueueInfoDto> queues, List<TopicInfoDto> topics)
     {
-        var client = _clientCache.GetClient(connection.Id, connection.ConnectionString);
-
-        var work = new List<Func<Task>>();
         foreach (var queue in queues)
         {
-            work.Add(async () => queue.ActiveMessageCount = await CountByPeekAsync(client, queue.Name, null, false, cancellationToken));
-            work.Add(async () => queue.DeadLetterMessageCount = await CountByPeekAsync(client, queue.Name, null, true, cancellationToken));
+            queue.ActiveCountExact = false;
+            queue.DeadLetterCountExact = false;
         }
-        foreach (var topic in topics)
+        foreach (var sub in topics.SelectMany(topic => topic.Subscriptions))
         {
-            foreach (var sub in topic.Subscriptions)
-            {
-                work.Add(async () => sub.ActiveMessageCount = await CountByPeekAsync(client, topic.Name, sub.Name, false, cancellationToken));
-                work.Add(async () => sub.DeadLetterMessageCount = await CountByPeekAsync(client, topic.Name, sub.Name, true, cancellationToken));
-            }
+            sub.ActiveCountExact = false;
+            sub.DeadLetterCountExact = false;
         }
-
-        using var throttle = new SemaphoreSlim(EmulatorCountConcurrency);
-        await Task.WhenAll(work.Select(async item =>
-        {
-            await throttle.WaitAsync(cancellationToken);
-            try
-            {
-                await item();
-            }
-            finally
-            {
-                throttle.Release();
-            }
-        }));
     }
 
-    public async Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName)
+    // Preserves already-known emulator counts across a re-enumeration, matched by name.
+    private static void CopyCounts((List<QueueInfoDto> Queues, List<TopicInfoDto> Topics) previous, List<QueueInfoDto> queues, List<TopicInfoDto> topics)
+    {
+        var previousQueues = previous.Queues.ToDictionary(q => q.Name, StringComparer.Ordinal);
+        foreach (var queue in queues)
+        {
+            if (!previousQueues.TryGetValue(queue.Name, out var old)) continue;
+            queue.ActiveMessageCount = old.ActiveMessageCount;
+            queue.DeadLetterMessageCount = old.DeadLetterMessageCount;
+            queue.ActiveCountExact = old.ActiveCountExact;
+            queue.DeadLetterCountExact = old.DeadLetterCountExact;
+        }
+
+        var previousTopics = previous.Topics.ToDictionary(t => t.Name, StringComparer.Ordinal);
+        foreach (var topic in topics)
+        {
+            if (!previousTopics.TryGetValue(topic.Name, out var oldTopic)) continue;
+            var previousSubs = oldTopic.Subscriptions.ToDictionary(sub => sub.Name, StringComparer.Ordinal);
+            foreach (var sub in topic.Subscriptions)
+            {
+                if (!previousSubs.TryGetValue(sub.Name, out var old)) continue;
+                sub.ActiveMessageCount = old.ActiveMessageCount;
+                sub.DeadLetterMessageCount = old.DeadLetterMessageCount;
+                sub.ActiveCountExact = old.ActiveCountExact;
+                sub.DeadLetterCountExact = old.DeadLetterCountExact;
+            }
+        }
+    }
+
+    public async Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName, bool recount = false, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        // The emulator reports zero through the management API, so derive the counts by peeking.
-        // This needs no admin API, so it also works for emulators without a reachable one.
+        // Emulator counts are browse-derived and maintained by the background sweep, so serve the
+        // last-known values. Deliberately no scan is started here: counting this entity would
+        // compete with the message read that follows a user opening it.
         if (connection.IsEmulator)
         {
-            var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+            if (recount)
+            {
+                await _countRefresher.CountEntityNowAsync(connection, queueName, null, cancellationToken);
+            }
+
+            var known = _entityCache.TryGet(connectionId, out var cached)
+                ? cached.Queues.FirstOrDefault(q => q.Name == queueName)
+                : null;
             return new QueueInfoDto
             {
                 Name = queueName,
-                ActiveMessageCount = await CountByPeekAsync(client, queueName, null, false, CancellationToken.None),
-                DeadLetterMessageCount = await CountByPeekAsync(client, queueName, null, true, CancellationToken.None),
+                ActiveMessageCount = known?.ActiveMessageCount ?? 0,
+                DeadLetterMessageCount = known?.DeadLetterMessageCount ?? 0,
+                ActiveCountExact = known?.ActiveCountExact ?? false,
+                DeadLetterCountExact = known?.DeadLetterCountExact ?? false,
                 IsEmulator = true
             };
         }
@@ -175,20 +207,29 @@ public class ServiceBusService : IServiceBusService
         }
     }
 
-    public async Task<SubscriptionInfoDto?> GetSubscriptionRuntimeInfoAsync(int connectionId, string topicName, string subscriptionName)
+    public async Task<SubscriptionInfoDto?> GetSubscriptionRuntimeInfoAsync(int connectionId, string topicName, string subscriptionName, bool recount = false, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        // Same emulator limitation as GetQueueRuntimeInfoAsync: counts come from peeking.
+        // Same as GetQueueRuntimeInfoAsync: last-known counts, no scan started here.
         if (connection.IsEmulator)
         {
-            var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+            if (recount)
+            {
+                await _countRefresher.CountEntityNowAsync(connection, topicName, subscriptionName, cancellationToken);
+            }
+
+            var known = _entityCache.TryGet(connectionId, out var cached)
+                ? cached.Topics.FirstOrDefault(t => t.Name == topicName)?.Subscriptions.FirstOrDefault(sub => sub.Name == subscriptionName)
+                : null;
             return new SubscriptionInfoDto
             {
                 Name = subscriptionName,
-                ActiveMessageCount = await CountByPeekAsync(client, topicName, subscriptionName, false, CancellationToken.None),
-                DeadLetterMessageCount = await CountByPeekAsync(client, topicName, subscriptionName, true, CancellationToken.None)
+                ActiveMessageCount = known?.ActiveMessageCount ?? 0,
+                DeadLetterMessageCount = known?.DeadLetterMessageCount ?? 0,
+                ActiveCountExact = known?.ActiveCountExact ?? false,
+                DeadLetterCountExact = known?.DeadLetterCountExact ?? false
             };
         }
 
@@ -703,109 +744,6 @@ public class ServiceBusService : IServiceBusService
             : client.CreateReceiver(entityPath, options);
     }
 
-    // The emulator's management API does not track message counts: its QueueDescription /
-    // SubscriptionDescription omit CountDetails entirely and hardcode MessageCount to 0, so
-    // GetQueuesRuntimePropertiesAsync always reports zero even when the entity holds messages.
-    // Counts therefore have to be derived by browsing. Peek never locks or consumes, so this is
-    // safe, but it is O(messages) — hence the cap. Browsing stops once either the counted total or
-    // the number of messages scanned reaches the cap, and the result is flagged Capped so callers
-    // can render it as "1000+". Reaching the cap is reported as capped even if the entity happens
-    // to hold exactly the cap: confirming that would cost another round trip for no real benefit.
-    private const int EmulatorCountPeekCap = 1000;
-    private const int EmulatorCountPeekPageSize = 250;
-
-    // Max entities counted concurrently. The cached ServiceBusClient multiplexes links over one
-    // connection, so this only bounds how many peek loops are in flight at once.
-    private const int EmulatorCountConcurrency = 8;
-
-    // Counts messages by peeking, up to EmulatorCountPeekCap. Returns 0 if browsing fails so a
-    // single unreadable entity can't take down the whole entity listing. A count that reaches the
-    // cap is the client's cue to render "N+" — keep EmulatorCountPeekCap in sync with the
-    // PEEK_COUNT_CAP constant in the client's EntityBrowser.
-    private async Task<long> CountByPeekAsync(ServiceBusClient client, string entityPath, string? subscriptionName, bool deadLetter, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, deadLetter);
-
-            long count = 0;
-            long? nextSequenceNumber = null;
-
-            // Bounded by the count rather than by messages scanned, so that reaching the cap is
-            // exactly what "there may be more" means — that equivalence is what lets the client
-            // decide to render "N+" from the number alone.
-            while (count < EmulatorCountPeekCap)
-            {
-                var pageSize = (int)Math.Min(EmulatorCountPeekPageSize, EmulatorCountPeekCap - count);
-                var batch = nextSequenceNumber.HasValue
-                    ? await receiver.PeekMessagesAsync(pageSize, nextSequenceNumber.Value, cancellationToken)
-                    : await receiver.PeekMessagesAsync(pageSize, cancellationToken: cancellationToken);
-
-                if (batch.Count == 0) break;
-
-                // Peek also surfaces scheduled and deferred messages, which the portal's active
-                // count excludes. The dead-letter subqueue has no such states, so count it whole.
-                count += deadLetter
-                    ? batch.Count
-                    : batch.Count(m => m.State == ServiceBusMessageState.Active);
-
-                nextSequenceNumber = batch[^1].SequenceNumber + 1;
-            }
-
-            return count;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Peek-based count failed for '{Path}'; reporting 0.", GetReceiverPath(entityPath, subscriptionName, deadLetter));
-            return 0;
-        }
-    }
-
-    // Peek-derived equivalent of the runtime message counts, for the emulator. Active/scheduled/
-    // deferred come from one browse of the entity (classified by message state) and the dead-letter
-    // count from a browse of its subqueue. Transfer counts have no browsable representation, so
-    // they stay 0 — they only ever apply to in-flight forwarding, which the emulator doesn't do.
-    private async Task<(long Active, long Scheduled, long DeadLetter, long Total)> CountByPeekBreakdownAsync(
-        ServiceBusClient client, string entityPath, string? subscriptionName, CancellationToken cancellationToken)
-    {
-        long active = 0, scheduled = 0, other = 0;
-
-        try
-        {
-            await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, false);
-
-            long scanned = 0;
-            long? nextSequenceNumber = null;
-
-            while (scanned < EmulatorCountPeekCap)
-            {
-                var pageSize = (int)Math.Min(EmulatorCountPeekPageSize, EmulatorCountPeekCap - scanned);
-                var batch = nextSequenceNumber.HasValue
-                    ? await receiver.PeekMessagesAsync(pageSize, nextSequenceNumber.Value, cancellationToken)
-                    : await receiver.PeekMessagesAsync(pageSize, cancellationToken: cancellationToken);
-
-                if (batch.Count == 0) break;
-
-                foreach (var message in batch)
-                {
-                    if (message.State == ServiceBusMessageState.Active) active++;
-                    else if (message.State == ServiceBusMessageState.Scheduled) scheduled++;
-                    else other++;
-                }
-
-                scanned += batch.Count;
-                nextSequenceNumber = batch[^1].SequenceNumber + 1;
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Peek-based count failed for '{Path}'; reporting 0.", GetReceiverPath(entityPath, subscriptionName, false));
-        }
-
-        var deadLetter = await CountByPeekAsync(client, entityPath, subscriptionName, true, cancellationToken);
-        return (active, scheduled, deadLetter, active + scheduled + other + deadLetter);
-    }
-
     private static string GetReceiverPath(string entityPath, string? subscriptionName, bool deadLetter)
     {
         if (subscriptionName != null)
@@ -1023,12 +961,18 @@ public class ServiceBusService : IServiceBusService
             dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
             dto.SizeInBytes = rt.SizeInBytes;
 
-            // The emulator's runtime properties are always zero, so browse for the real counts.
-            if (connection.IsEmulator)
+            // The emulator's runtime properties are always zero; use the background-maintained
+            // browse counts instead. Scheduled/transfer counts have no browse equivalent here and
+            // stay zero.
+            if (connection.IsEmulator && _entityCache.TryGet(connectionId, out var cached))
             {
-                var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
-                var counts = await CountByPeekBreakdownAsync(client, queueName, null, CancellationToken.None);
-                (dto.ActiveMessageCount, dto.ScheduledMessageCount, dto.DeadLetterMessageCount, dto.TotalMessageCount) = counts;
+                var known = cached.Queues.FirstOrDefault(q => q.Name == queueName);
+                if (known != null)
+                {
+                    dto.ActiveMessageCount = known.ActiveMessageCount;
+                    dto.DeadLetterMessageCount = known.DeadLetterMessageCount;
+                    dto.TotalMessageCount = known.ActiveMessageCount + known.DeadLetterMessageCount;
+                }
             }
 
             dto.CreatedAt = rt.CreatedAt;
@@ -1116,12 +1060,16 @@ public class ServiceBusService : IServiceBusService
             dto.TransferMessageCount = rt.TransferMessageCount;
             dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
 
-            // Same emulator limitation as GetQueuePropertiesAsync.
-            if (connection.IsEmulator)
+            // Same as GetQueuePropertiesAsync.
+            if (connection.IsEmulator && _entityCache.TryGet(connectionId, out var cached))
             {
-                var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
-                var (active, _, deadLetter, total) = await CountByPeekBreakdownAsync(client, topicName, subscriptionName, CancellationToken.None);
-                (dto.ActiveMessageCount, dto.DeadLetterMessageCount, dto.TotalMessageCount) = (active, deadLetter, total);
+                var known = cached.Topics.FirstOrDefault(t => t.Name == topicName)?.Subscriptions.FirstOrDefault(sub => sub.Name == subscriptionName);
+                if (known != null)
+                {
+                    dto.ActiveMessageCount = known.ActiveMessageCount;
+                    dto.DeadLetterMessageCount = known.DeadLetterMessageCount;
+                    dto.TotalMessageCount = known.ActiveMessageCount + known.DeadLetterMessageCount;
+                }
             }
 
             dto.CreatedAt = rt.CreatedAt;

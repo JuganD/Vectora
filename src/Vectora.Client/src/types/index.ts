@@ -12,6 +12,9 @@ export interface QueueInfo {
   name: string;
   activeMessageCount: number;
   deadLetterMessageCount: number;
+  // False when the count is a floor rather than a total (rendered "N+"). Emulator only.
+  activeCountExact?: boolean;
+  deadLetterCountExact?: boolean;
   isEmulator: boolean;
   requiresSession: boolean;
 }
@@ -26,6 +29,8 @@ export interface SubscriptionInfo {
   name: string;
   activeMessageCount: number;
   deadLetterMessageCount: number;
+  activeCountExact?: boolean;
+  deadLetterCountExact?: boolean;
   requiresSession: boolean;
 }
 

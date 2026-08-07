@@ -89,14 +89,14 @@ export const reorderConnections = (orderedIds: number[]) =>
 
 // Service Bus entities
 export const getEntities = (connectionId: number, refreshCache = false, signal?: AbortSignal) =>
-  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(
+  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[]; countsPending: boolean }>(
     `/connections/${connectionId}/servicebus/entities${refreshCache ? '?refreshCache=true' : ''}`,
     { signal }
   );
 
 // Queue operations
-export const getQueueRuntimeInfo = (connectionId: number, queueName: string) =>
-  fetchApi<QueueInfo>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/runtime`);
+export const getQueueRuntimeInfo = (connectionId: number, queueName: string, recount = false) =>
+  fetchApi<QueueInfo>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/runtime${recount ? '?recount=true' : ''}`);
 export const getQueueProperties = (connectionId: number, queueName: string) =>
   fetchApi<QueueProperties>(`/connections/${connectionId}/servicebus/queues/${encodeURIComponent(queueName)}/properties`);
 export const createQueue = (connectionId: number, data: CreateQueueRequest) =>
@@ -117,8 +117,8 @@ export const updateTopic = (connectionId: number, topicName: string, data: Updat
   fetchApi<void>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}`, { method: 'PUT', body: JSON.stringify(data) });
 
 // Subscription operations
-export const getSubscriptionRuntimeInfo = (connectionId: number, topicName: string, subscriptionName: string) =>
-  fetchApi<SubscriptionInfo>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/runtime`);
+export const getSubscriptionRuntimeInfo = (connectionId: number, topicName: string, subscriptionName: string, recount = false) =>
+  fetchApi<SubscriptionInfo>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/runtime${recount ? '?recount=true' : ''}`);
 export const getSubscriptionProperties = (connectionId: number, topicName: string, subscriptionName: string) =>
   fetchApi<SubscriptionProperties>(`/connections/${connectionId}/servicebus/topics/${encodeURIComponent(topicName)}/subscriptions/${encodeURIComponent(subscriptionName)}/properties`);
 export const createSubscription = (connectionId: number, topicName: string, data: CreateSubscriptionRequest) =>

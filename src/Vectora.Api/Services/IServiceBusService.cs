@@ -5,8 +5,8 @@ namespace Vectora.Api.Services;
 public interface IServiceBusService
 {
     Task<(List<QueueInfoDto> Queues, List<TopicInfoDto> Topics)?> GetEntitiesAsync(int connectionId, bool refreshCache = false, CancellationToken cancellationToken = default);
-    Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName);
-    Task<SubscriptionInfoDto?> GetSubscriptionRuntimeInfoAsync(int connectionId, string topicName, string subscriptionName);
+    Task<QueueInfoDto?> GetQueueRuntimeInfoAsync(int connectionId, string queueName, bool recount = false, CancellationToken cancellationToken = default);
+    Task<SubscriptionInfoDto?> GetSubscriptionRuntimeInfoAsync(int connectionId, string topicName, string subscriptionName, bool recount = false, CancellationToken cancellationToken = default);
     Task<List<ServiceBusMessageDto>?> PeekMessagesAsync(int connectionId, string entityPath, string? subscriptionName, int maxMessages, bool deadLetter, long? fromSequenceNumber = null);
     Task<SessionScanResultDto?> ScanSessionsAsync(int connectionId, string entityPath, string? subscriptionName, bool deadLetter, long? fromSequenceNumber, int scanLimit);
     Task<SessionMessageScanResultDto?> PeekSessionMessagesAsync(int connectionId, string entityPath, string? subscriptionName, string sessionId, bool deadLetter, long? fromSequenceNumber, int scanLimit);

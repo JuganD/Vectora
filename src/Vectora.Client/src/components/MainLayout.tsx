@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { LogOut, RefreshCw, ChevronDown, Check, Menu, X, Settings } from 'lucide-react';
 import type { Connection, QueueInfo, TopicInfo, SelectedEntity } from '../types';
 import { getConnections, getEntities, getQueueRuntimeInfo, getSubscriptionRuntimeInfo, getSettings, updateSettings } from '../api/client';
+import { mergeMessageCount, type MessageCount } from '../utils/messageCounts';
 import ConnectionManager from './ConnectionManager';
 import EntityBrowser from './EntityBrowser';
 import MessagePanel from './MessagePanel';
@@ -25,6 +26,12 @@ import TourGuide, {
 const LAST_CONNECTION_KEY = 'vectora_last_connection';
 
 const REFRESH_THROTTLE_MS = 5 * 60 * 1000;
+
+// Emulator message counts are filled in by a background sweep on the server (browsing is far too
+// slow to hold a request open), so the first response can carry provisional numbers. Poll the cheap
+// cached endpoint until the server reports the sweep finished.
+const COUNTS_POLL_INTERVAL_MS = 2000;
+const COUNTS_POLL_TIMEOUT_MS = 120000;
 
 // Hook to detect mobile viewport
 function useIsMobile() {
@@ -100,6 +107,62 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     setTopics(data.topics);
   }, []);
 
+  // What the message panel has proved about an entity's counts by actually loading its messages.
+  // Keyed "queue:<name>" / "sub:<topic>/<name>", holding the active and dead-letter sub-queues
+  // separately because the panel only ever loads one of them at a time.
+  const [loadedCounts, setLoadedCounts] = useState<Record<string, { active?: MessageCount; deadLetter?: MessageCount }>>({});
+
+  const handleMessagesLoaded = useCallback((entity: SelectedEntity, loaded: number, reachedEnd: boolean, deadLetter: boolean) => {
+    // Real Service Bus reports exact counts from the admin API; only emulator counts need this.
+    if (!selectedConnectionRef.current?.isEmulator) return;
+    const key = entity.type === 'subscription' && entity.topicName ? `sub:${entity.topicName}/${entity.name}` : `queue:${entity.name}`;
+    setLoadedCounts(prev => ({
+      ...prev,
+      [key]: { ...prev[key], [deadLetter ? 'deadLetter' : 'active']: { count: loaded, isExact: reachedEnd } },
+    }));
+  }, []);
+
+  // One poll loop at a time per connection; cancelled when the connection changes or we unmount.
+  const countsPollRef = useRef<{ connectionId: number; cancelled: boolean } | null>(null);
+
+  const stopCountsPoll = useCallback(() => {
+    if (countsPollRef.current) countsPollRef.current.cancelled = true;
+    countsPollRef.current = null;
+  }, []);
+
+  const pollCountsUntilSettled = useCallback((connectionId: number) => {
+    stopCountsPoll();
+    const token = { connectionId, cancelled: false };
+    countsPollRef.current = token;
+
+    const startedAt = Date.now();
+    const tick = async () => {
+      if (token.cancelled) return;
+      if (Date.now() - startedAt >= COUNTS_POLL_TIMEOUT_MS) {
+        if (countsPollRef.current === token) countsPollRef.current = null;
+        return;
+      }
+      try {
+        // Deliberately unrefreshed: refreshCache=true would re-enumerate and restart the sweep,
+        // so the pending flag would never clear.
+        const data = await getEntities(connectionId, false);
+        if (token.cancelled || selectedConnectionRef.current?.id !== connectionId) return;
+        applyEntities(data);
+        if (!data.countsPending) {
+          if (countsPollRef.current === token) countsPollRef.current = null;
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to poll entity counts:', error);
+      }
+      if (!token.cancelled) setTimeout(tick, COUNTS_POLL_INTERVAL_MS);
+    };
+
+    setTimeout(tick, COUNTS_POLL_INTERVAL_MS);
+  }, [applyEntities, stopCountsPoll]);
+
+  useEffect(() => stopCountsPoll, [stopCountsPoll]);
+
   const refreshConnection = useCallback(async (connectionId: number) => {
     if (inFlightRefreshRef.current.has(connectionId)) return;
     inFlightRefreshRef.current.add(connectionId);
@@ -107,20 +170,29 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     try {
       const data = await getEntities(connectionId, true);
       lastRefreshRef.current.set(connectionId, Date.now());
-      if (selectedConnectionRef.current?.id === connectionId) applyEntities(data);
+      // A refresh re-browses every entity, so previously loaded totals are no longer a better
+      // source than the server's — and a stale exact count must not pin the counter forever.
+      setLoadedCounts({});
+      if (selectedConnectionRef.current?.id === connectionId) {
+        applyEntities(data);
+        if (data.countsPending) pollCountsUntilSettled(connectionId);
+      }
     } catch (error) {
       console.error('Failed to refresh entities:', error);
     } finally {
       inFlightRefreshRef.current.delete(connectionId);
       if (selectedConnectionRef.current?.id === connectionId) setLoading(false);
     }
-  }, [applyEntities]);
+  }, [applyEntities, pollCountsUntilSettled]);
 
   const openConnection = useCallback(async (connectionId: number) => {
     if (selectedConnectionRef.current?.id === connectionId) setLoading(true);
     try {
       const data = await getEntities(connectionId, false);
-      if (selectedConnectionRef.current?.id === connectionId) applyEntities(data);
+      if (selectedConnectionRef.current?.id === connectionId) {
+        applyEntities(data);
+        if (data.countsPending) pollCountsUntilSettled(connectionId);
+      }
     } catch (error) {
       console.error('Failed to load cached entities:', error);
     }
@@ -131,7 +203,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     } else if (selectedConnectionRef.current?.id === connectionId) {
       setLoading(false);
     }
-  }, [applyEntities, refreshConnection]);
+  }, [applyEntities, refreshConnection, pollCountsUntilSettled]);
 
   const refreshEntities = useCallback(() => {
     if (selectedConnectionRef.current) refreshConnection(selectedConnectionRef.current.id);
@@ -147,20 +219,20 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     }
   };
 
-  const updateEntityCount = useCallback(async (entity: SelectedEntity) => {
+  const updateEntityCount = useCallback(async (entity: SelectedEntity, recount = false) => {
     const connectionId = selectedConnectionRef.current?.id;
     if (connectionId == null) return;
     try {
       if (entity.type === 'queue') {
-        const info = await getQueueRuntimeInfo(connectionId, entity.name);
+        const info = await getQueueRuntimeInfo(connectionId, entity.name, recount);
         if (selectedConnectionRef.current?.id !== connectionId) return;
-        setQueues(prev => prev.map(q => q.name === entity.name ? { ...q, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount } : q));
+        setQueues(prev => prev.map(q => q.name === entity.name ? { ...q, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount, activeCountExact: info.activeCountExact, deadLetterCountExact: info.deadLetterCountExact } : q));
       } else if (entity.type === 'subscription' && entity.topicName) {
-        const info = await getSubscriptionRuntimeInfo(connectionId, entity.topicName, entity.name);
+        const info = await getSubscriptionRuntimeInfo(connectionId, entity.topicName, entity.name, recount);
         if (selectedConnectionRef.current?.id !== connectionId) return;
         setTopics(prev => prev.map(t => t.name === entity.topicName ? {
           ...t,
-          subscriptions: t.subscriptions.map(s => s.name === entity.name ? { ...s, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount } : s)
+          subscriptions: t.subscriptions.map(s => s.name === entity.name ? { ...s, activeMessageCount: info.activeMessageCount, deadLetterMessageCount: info.deadLetterMessageCount, activeCountExact: info.activeCountExact, deadLetterCountExact: info.deadLetterCountExact } : s)
         } : t));
       }
     } catch (error) {
@@ -276,8 +348,39 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     ? TOUR_DUMMY_CONNECTION
     : selectedConnection;
 
-  const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : queues;
-  const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : topics;
+  const countedQueues: QueueInfo[] = useMemo(() => queues.map(queue => {
+    const loaded = loadedCounts[`queue:${queue.name}`];
+    if (!loaded) return queue;
+    const active = mergeMessageCount({ count: queue.activeMessageCount, isExact: queue.activeCountExact ?? true }, loaded.active);
+    const dlq = mergeMessageCount({ count: queue.deadLetterMessageCount, isExact: queue.deadLetterCountExact ?? true }, loaded.deadLetter);
+    return {
+      ...queue,
+      activeMessageCount: active.count,
+      activeCountExact: active.isExact,
+      deadLetterMessageCount: dlq.count,
+      deadLetterCountExact: dlq.isExact,
+    };
+  }), [queues, loadedCounts]);
+
+  const countedTopics: TopicInfo[] = useMemo(() => topics.map(topic => ({
+    ...topic,
+    subscriptions: topic.subscriptions.map(sub => {
+      const loaded = loadedCounts[`sub:${topic.name}/${sub.name}`];
+      if (!loaded) return sub;
+      const active = mergeMessageCount({ count: sub.activeMessageCount, isExact: sub.activeCountExact ?? true }, loaded.active);
+      const dlq = mergeMessageCount({ count: sub.deadLetterMessageCount, isExact: sub.deadLetterCountExact ?? true }, loaded.deadLetter);
+      return {
+        ...sub,
+        activeMessageCount: active.count,
+        activeCountExact: active.isExact,
+        deadLetterMessageCount: dlq.count,
+        deadLetterCountExact: dlq.isExact,
+      };
+    }),
+  })), [topics, loadedCounts]);
+
+  const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : countedQueues;
+  const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : countedTopics;
 
   const effectiveSelectedEntity: SelectedEntity | null = tourNeedsMessagePanel
     ? TOUR_DUMMY_SELECTED_ENTITY
@@ -507,6 +610,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             queues={effectiveQueues}
             topics={effectiveTopics}
             onUpdateEntityCount={tourNeedsMessagePanel ? undefined : updateEntityCount}
+            onMessagesLoaded={tourNeedsMessagePanel ? undefined : handleMessagesLoaded}
             isMobile={isMobile}
             onOpenSidebar={() => setShowMobileSidebar(true)}
             tourDummyMessages={tourDummyMessagesForPanel}

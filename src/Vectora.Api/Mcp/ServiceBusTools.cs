@@ -60,7 +60,7 @@ public static class ServiceBusTools
     }
 
     [McpServerTool(Name = "describe_entity")]
-    [Description("Returns the full configuration and runtime metrics of a single queue, topic, or subscription: TTL, lock duration, max delivery count, session/duplicate-detection/partitioning flags, forwarding targets, size limits, plus live counts (active, dead-letter, scheduled, transfer) and timestamps. Provide queueName for a queue, topicName alone for a topic, or topicName+subscriptionName for a subscription. Read-only: nothing is modified.")]
+    [Description("Returns the full configuration and runtime metrics of a single queue, topic, or subscription: TTL, lock duration, max delivery count, session/duplicate-detection/partitioning flags, forwarding targets, size limits, plus live counts (active, dead-letter, scheduled, transfer) and timestamps. Provide queueName for a queue, topicName alone for a topic, or topicName+subscriptionName for a subscription. Read-only: nothing is modified. On emulator connections the message counts come from a background browse of the entity and reflect the last completed scan, and scheduled/transfer counts are not available.")]
     public static async Task<object> DescribeEntityAsync(
         IConnectionRepository connections,
         IServiceBusService serviceBus,

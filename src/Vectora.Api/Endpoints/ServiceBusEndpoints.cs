@@ -60,7 +60,7 @@ public static class ServiceBusEndpoints
             .WithName("DeleteSubscription");
     }
 
-    private static async Task<IResult> GetEntities(int connectionId, IServiceBusService serviceBusService, HttpContext context, bool? refreshCache)
+    private static async Task<IResult> GetEntities(int connectionId, IServiceBusService serviceBusService, IEmulatorCountRefresher countRefresher, HttpContext context, bool? refreshCache)
     {
         var result = await serviceBusService.GetEntitiesAsync(connectionId, refreshCache ?? false, context.RequestAborted);
         if (result == null)
@@ -69,12 +69,17 @@ public static class ServiceBusEndpoints
         }
 
         var (queues, topics) = result.Value;
-        return Results.Ok(new { queues, topics });
+
+        // Emulator counts are filled in by a background sweep, so the numbers in this response may
+        // still be provisional. The client polls the (cached, cheap) unrefreshed endpoint until this
+        // clears. Always false for real Service Bus, whose counts come back exact.
+        var countsPending = countRefresher.IsPending(connectionId);
+        return Results.Ok(new { queues, topics, countsPending });
     }
 
-    private static async Task<IResult> GetQueueRuntimeInfo(int connectionId, string queueName, IServiceBusService serviceBusService)
+    private static async Task<IResult> GetQueueRuntimeInfo(int connectionId, string queueName, IServiceBusService serviceBusService, HttpContext context, bool? recount)
     {
-        var info = await serviceBusService.GetQueueRuntimeInfoAsync(connectionId, queueName);
+        var info = await serviceBusService.GetQueueRuntimeInfoAsync(connectionId, queueName, recount ?? false, context.RequestAborted);
         if (info == null)
         {
             return Results.NotFound("Queue or connection not found");
@@ -176,9 +181,9 @@ public static class ServiceBusEndpoints
         return Results.NotFound("Connection not found");
     }
 
-    private static async Task<IResult> GetSubscriptionRuntimeInfo(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService)
+    private static async Task<IResult> GetSubscriptionRuntimeInfo(int connectionId, string topicName, string subscriptionName, IServiceBusService serviceBusService, HttpContext context, bool? recount)
     {
-        var info = await serviceBusService.GetSubscriptionRuntimeInfoAsync(connectionId, topicName, subscriptionName);
+        var info = await serviceBusService.GetSubscriptionRuntimeInfoAsync(connectionId, topicName, subscriptionName, recount ?? false, context.RequestAborted);
         if (info == null)
         {
             return Results.NotFound("Subscription or connection not found");

@@ -16,7 +16,10 @@ interface MessagePanelProps {
   selectedEntity: SelectedEntity | null;
   queues: QueueInfo[];
   topics: TopicInfo[];
-  onUpdateEntityCount?: (entity: SelectedEntity) => void;
+  onUpdateEntityCount?: (entity: SelectedEntity, recount?: boolean) => void;
+  // Reports what the loaded message list proves about the entity's count: at least `loaded`
+  // messages, and exactly `loaded` once the end of the entity has been reached.
+  onMessagesLoaded?: (entity: SelectedEntity, loaded: number, reachedEnd: boolean, deadLetter: boolean) => void;
   isMobile?: boolean;
   onOpenSidebar?: () => void;
   // When set, the panel uses these messages instead of loading from the API
@@ -74,7 +77,7 @@ function sortSearchHistoryEntries(entries: SearchHistoryEntry[]) {
   });
 }
 
-export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, isMobile = false, onOpenSidebar, tourDummyMessages, tourForcedViewMode }: MessagePanelProps) {
+export default function MessagePanel({ connection, selectedEntity, queues, topics, onUpdateEntityCount, onMessagesLoaded, isMobile = false, onOpenSidebar, tourDummyMessages, tourForcedViewMode }: MessagePanelProps) {
   useDateFormat(); // re-render session timestamps when the date format setting changes
   // Mobile view state: 'list' shows message list, 'detail' shows message detail
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
@@ -152,6 +155,11 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const loadAllRunIdRef = useRef(0);
   const messagesRef = useRef<ServiceBusMessage[]>([]);
   const hasMoreRef = useRef(true);
+  // Bumped whenever the entity, connection, DLQ flag or session mode changes. Every load captures
+  // it and discards its result if it no longer matches, so a peek that resolves after the user has
+  // moved on can't append another entity's messages to this list or report its count. The emulator
+  // makes this easy to hit: a single peek there occasionally stalls ~12s.
+  const loadGenRef = useRef(0);
   const searchInputRef = useRef('');
   const searchHistoryContainerRef = useRef<HTMLDivElement>(null);
   const searchDeletingRef = useRef(false);
@@ -203,8 +211,19 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   // Any in-flight load, used for the header spinner/refresh state across all modes.
   const busy = loading || sessionsLoading || sessionMsgLoading;
 
+  // Capture the entity and sub-queue at call time: by the time a load resolves the selection may
+  // already have moved on, and reporting these counts against the new entity would be wrong.
+  const reportLoaded = (gen: number, entity: SelectedEntity, deadLetter: boolean, loaded: number, reachedEnd: boolean) => {
+    if (gen !== loadGenRef.current) return;
+    if (sessionView || tourDummyMessages !== undefined) return;
+    onMessagesLoaded?.(entity, loaded, reachedEnd, deadLetter);
+  };
+
   const loadMessages = async () => {
     if (!connection || !selectedEntity) return;
+    const entity = selectedEntity;
+    const deadLetter = showDeadLetter;
+    const gen = loadGenRef.current;
     setLoading(true);
     setHasMore(true);
     try {
@@ -216,8 +235,18 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       } else {
         msgs = [];
       }
+      if (gen !== loadGenRef.current) return;
+
       setMessages(msgs);
       setHasMore(msgs.length === PAGE_SIZE);
+      reportLoaded(gen, entity, deadLetter, msgs.length, msgs.length < PAGE_SIZE);
+
+      // A full first page means there may be more than we can see, so ask the server to browse the
+      // entity for a sharper number. Deliberately not awaited: the messages are already on screen
+      // and the count arrives whenever it arrives.
+      if (msgs.length === PAGE_SIZE && connection.isEmulator) {
+        onUpdateEntityCount?.(entity, true);
+      }
       setSelectedMessage(null);
       setSelectedMessages(new Set());
     } catch (error) {
@@ -271,6 +300,9 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const loadMoreMessages = async () => {
     if (!connection || !selectedEntity || loadingMore || loadingAll || !hasMore || messages.length === 0) return;
     if (tourDummyMessages !== undefined) return; // tour mode: no more pages to load
+    const entity = selectedEntity;
+    const deadLetter = showDeadLetter;
+    const gen = loadGenRef.current;
     setLoadingMore(true);
     try {
       const lastSequenceNumber = messages[messages.length - 1].sequenceNumber;
@@ -282,10 +314,13 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       } else {
         moreMsgs = [];
       }
+      if (gen !== loadGenRef.current) return;
+
       if (moreMsgs.length > 0) {
         setMessages(prev => [...prev, ...moreMsgs]);
       }
       setHasMore(moreMsgs.length === PAGE_SIZE);
+      reportLoaded(gen, entity, deadLetter, messages.length + moreMsgs.length, moreMsgs.length < PAGE_SIZE);
     } catch (error) {
       console.error('Failed to load more messages:', error);
     } finally {
@@ -303,13 +338,16 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
   const loadAllRemaining = useCallback(async () => {
     if (!connection || !selectedEntity || loadAllRef.current) return;
     if (tourDummyMessages !== undefined) return; // tour mode: messages are already complete
+    const entity = selectedEntity;
+    const deadLetter = showDeadLetter;
+    const gen = loadGenRef.current;
     const runId = ++loadAllRunIdRef.current;
     loadAllRef.current = true;
     setLoadingAll(true);
     try {
       let current = messagesRef.current;
       let more = hasMoreRef.current;
-      while (more && loadAllRunIdRef.current === runId) {
+      while (more && loadAllRunIdRef.current === runId && gen === loadGenRef.current) {
         const last = current.length > 0 ? current[current.length - 1].sequenceNumber : undefined;
         const from = last != null ? last + 1 : undefined;
         let batch: ServiceBusMessage[];
@@ -320,13 +358,15 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
         } else {
           break;
         }
-        if (loadAllRunIdRef.current !== runId) break;
+        if (loadAllRunIdRef.current !== runId || gen !== loadGenRef.current) break;
         if (batch.length > 0) {
           current = [...current, ...batch];
           setMessages(current);
         }
         more = batch.length === SEARCH_PAGE_SIZE;
         setHasMore(more);
+        // The search drain scans the whole entity, so its running total is a real count.
+        reportLoaded(gen, entity, deadLetter, current.length, !more);
       }
     } catch (error) {
       console.error('Failed to load all messages for search:', error);
@@ -591,8 +631,17 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
       void saveSearchTerm(pendingSearchTerm);
     }
     loadAllRunIdRef.current += 1;
+    loadGenRef.current += 1;
     loadAllRef.current = false;
     setLoadingAll(false);
+    // Drop the outgoing entity's messages straight away. Leaving them in place let the
+    // load-more path continue the *previous* entity's list against the newly selected one.
+    // The refs are cleared synchronously too: they are normally synced by an effect, so the
+    // search drain could otherwise start from the previous entity's list.
+    setMessages([]);
+    setHasMore(true);
+    messagesRef.current = [];
+    hasMoreRef.current = true;
     setSelectedSession(null);
     setSelectedMessage(null);
     setSelectedMessages(new Set());
@@ -961,11 +1010,11 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
           {entityInfo && 'activeMessageCount' in entityInfo && (
             <div className="flex items-center gap-1 sm:gap-2 ml-1 md:ml-4 flex-shrink-0">
               <span className="text-[11px] sm:text-xs bg-dark-600 px-2 py-1 rounded whitespace-nowrap">
-                <span className="sm:hidden">A: {formatMessageCount(entityInfo.activeMessageCount, connection.isEmulator)}</span>
-                <span className="hidden sm:inline">Active: {formatMessageCount(entityInfo.activeMessageCount, connection.isEmulator)}</span>
+                <span className="sm:hidden">A: {formatMessageCount({ count: entityInfo.activeMessageCount, isExact: entityInfo.activeCountExact ?? true })}</span>
+                <span className="hidden sm:inline">Active: {formatMessageCount({ count: entityInfo.activeMessageCount, isExact: entityInfo.activeCountExact ?? true })}</span>
               </span>
               <span className={`text-xs px-2 py-1 rounded ${entityInfo.deadLetterMessageCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-red-500/10 text-red-300'}`}>
-                DLQ: {formatMessageCount(entityInfo.deadLetterMessageCount, connection.isEmulator)}
+                DLQ: {formatMessageCount({ count: entityInfo.deadLetterMessageCount, isExact: entityInfo.deadLetterCountExact ?? true })}
               </span>
             </div>
           )}
