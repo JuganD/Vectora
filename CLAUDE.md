@@ -62,8 +62,7 @@ SQLite via EF Core (`VectoraDbContext`). Database file is `{DataPath}/vectora.db
 3. Enables WAL journal mode and `busy_timeout = 5000` for concurrent-write resilience.
 
 Entities (each with a unique index on name/key):
-- `ServiceBusConnection` — saved Service Bus connections; `IsEmulator` + `EmulatorConfigId` link to a stored emulator config.
-- `EmulatorConfigFile` — raw JSON content of an Azure Service Bus Emulator config (the file you'd otherwise pass to the emulator at startup).
+- `ServiceBusConnection` — saved Service Bus connections; `IsEmulator` selects the emulator admin-port rewrite.
 - `Setting` — key/value app settings (e.g. `BatchOperationTimeoutSeconds`, clamped 10–600).
 - `MessageTemplate` — saved message bodies for resend.
 
@@ -73,20 +72,22 @@ Entities (each with a unique index on name/key):
 
 ### Emulator vs real Service Bus
 
-`ServiceBusService` picks an entity-management path per call via `GetManagementClientAsync`:
+**Vectora requires an emulator that serves the management API** — an Azure Service Bus Emulator build with SDK ≥ 7.20, which exposes the admin API on a separate HTTP port (5300 by default, configurable via the `EmulatorAdminPort` setting / `EMULATOR_HTTP_PORT` on the emulator). There is no degraded mode for older emulators: if the management API isn't reachable, admin calls fail and surface the error rather than serving a partial view.
 
-- **Real Service Bus**: uses `ServiceBusAdministrationClient` for entity CRUD and runtime info.
-- **Emulator with a reachable management API**: newer Azure Service Bus Emulator builds (with SDK ≥ 7.20) expose the admin API over a separate HTTP port (5300 by default, configurable via the `EmulatorAdminPort` setting / `EMULATOR_HTTP_PORT` on the emulator). When a TCP probe to that port succeeds, the emulator is driven through the same `ServiceBusAdministrationClient` code path as real Service Bus — full CRUD and real message counts. The admin client is built from a connection string whose `Endpoint` is rewritten to the admin port (`EmulatorAdmin.BuildAdminConnectionString`); the data-plane `ServiceBusClient` keeps the original string. Probe results are cached on `ServiceBusClientCache` and re-checked on each explicit refresh (`refreshCache=true`).
-- **Emulator with no reachable management API (fallback)**: entity CRUD reads/mutates the JSON config stored in `EmulatorConfigFile` via `EmulatorConfigService`, and runtime message counts are reported as 0; messaging operations (send/peek/receive/DLQ) always go through the regular `ServiceBusClient` regardless.
+`ServiceBusService.GetManagementClient` returns a `ServiceBusAdministrationClient` for every connection:
 
-`GetEntitiesAsync` returns a `SupportsManagement` flag (true for real Service Bus, and for emulators when admin is reachable). The frontend threads it through as `canManage` to gate the create/edit/delete UI and runtime-count refreshes. When adding new entity-management features, route admin access through `GetManagementClientAsync` and keep the `EmulatorConfigService` fallback for the no-admin case.
+- **Real Service Bus**: built from the connection string as-is.
+- **Emulator**: built from a connection string whose `Endpoint` is rewritten to the admin port (`EmulatorAdmin.BuildAdminConnectionString`). The data-plane `ServiceBusClient` keeps the original string, and messaging operations (send/peek/receive/DLQ) always go through it.
+
+Entity enumeration, CRUD, properties, and subscription rules therefore take one code path for both. **Message counts are the single exception:** the emulator's management API does not track them — its `QueueDescription`/`SubscriptionDescription` omit `CountDetails` entirely and hardcode `MessageCount` to 0, so `Get*RuntimePropertiesAsync` always reports zero even when the entity holds messages. Vectora derives emulator counts by browsing instead (peek, never consume) in `CountByPeekAsync`/`CountByPeekBreakdownAsync`, capped at `EmulatorCountPeekCap` (1000) messages per entity and fanned out `EmulatorCountConcurrency` at a time. A count that reaches the cap means "at least this many"; the client renders it as `1000+` via `formatMessageCount` in `src/utils/messageCounts.ts`, whose `PEEK_COUNT_CAP` must stay in sync with `EmulatorCountPeekCap`. This applies to the entity list, both per-entity `/runtime` endpoints, and MCP `describe_entity`. The real-Service-Bus path keeps using the admin runtime properties, which are exact.
+
+Because management is now unconditional, there is no `SupportsManagement`/`canManage` flag — entity create/edit/delete UI is always available. Route any new entity-management feature through `GetManagementClient`.
 
 ### Endpoint layout
 
 Minimal APIs grouped in `Endpoints/`:
 - `AuthEndpoints` — `/api/auth/{status,login,validate}`
 - `ConnectionEndpoints` — `/api/connections`
-- `EmulatorConfigEndpoints` — `/api/emulator-configs`
 - `ServiceBusEndpoints` — `/api/connections/{connectionId:int}/servicebus/...` for entity (queue/topic/subscription) management
 - `ServiceBusMessageEndpoints` — same prefix, for peek/receive/send and DLQ return/consume (both single and batch by sequence number)
 - `MessageTemplateEndpoints` — `/api/message-templates`
@@ -98,7 +99,7 @@ DTOs live in `Models/Dtos/`. `ValidationHelper` enforces entity-name and message
 
 Vectora hosts a built-in MCP server (Model Context Protocol) at `/mcp` so AI agents can browse and test Service Bus. It uses the official `ModelContextProtocol.AspNetCore` SDK over Streamable HTTP, registered in `Program.cs` (`AddMcpServer().WithHttpTransport().WithToolsFromAssembly()` + `app.MapMcp("/mcp")`). Tools are defined in `Mcp/ServiceBusTools.cs` (`[McpServerToolType]` / `[McpServerTool]`) and delegate to the existing `IServiceBusService` and `IConnectionRepository` — no duplicated Service Bus logic.
 
-Tools: `list_connections`, `list_entities`, `describe_entity` (full read-only config + runtime metrics of one queue/topic/subscription), `get_subscription_rules` (subscription filters/actions), `list_sessions` (peek-based, lock-free session listing), `peek_messages`, `peek_dead_letter_messages`, `send_message`. `describe_entity`/`get_subscription_rules` require management support (real Service Bus, or an emulator with a reachable admin API) and go through the existing `IServiceBusService` property/rule methods.
+Tools: `list_connections`, `list_entities`, `describe_entity` (full read-only config + runtime metrics of one queue/topic/subscription), `get_subscription_rules` (subscription filters/actions), `list_sessions` (peek-based, lock-free session listing), `peek_messages`, `peek_dead_letter_messages`, `send_message`. `describe_entity`/`get_subscription_rules` go through the existing `IServiceBusService` property/rule methods.
 
 **Safety model (important):**
 - **Reads are peek-only.** The read tools call `PeekMessagesAsync` exclusively, never receive/consume — browsing never locks or removes messages, consistent with the "production reads must be lock-free" rule.
@@ -124,8 +125,7 @@ Tailwind is configured via `tailwind.config.js` + `postcss.config.js`; Monaco is
 |---|---|
 | `VECTORA_PASSWORD` | Optional login password; also seeds the JWT signing key |
 | `DataPath` | Directory for `vectora.db` (default `./data`, `/data` in container) |
-| `EmulatorConfigPath` | Set in the container image but the current code reads emulator configs from the DB, not the filesystem |
-| `EmulatorAdminPort` | Port the Service Bus emulator serves the management API on (default `5300`). Used to build the emulator admin connection string and to probe admin availability |
+| `EmulatorAdminPort` | Port the Service Bus emulator serves the management API on (default `5300`). Used to build the emulator admin connection string |
 | `ASPNETCORE_URLS` | Standard ASP.NET hosting binding |
 | `VITE_API_URL` | Frontend base URL for API calls (set in `.env.local` for split dev) |
 

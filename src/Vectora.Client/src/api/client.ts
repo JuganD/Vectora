@@ -1,7 +1,7 @@
 import type {
   Connection, QueueInfo, TopicInfo, SubscriptionInfo, ServiceBusMessage, SendMessageRequest,
   CreateConnectionRequest, CreateQueueRequest, CreateTopicRequest, CreateSubscriptionRequest,
-  EmulatorConfig, QueueProperties, TopicProperties, SubscriptionProperties,
+  QueueProperties, TopicProperties, SubscriptionProperties,
   UpdateQueueRequest, UpdateTopicRequest, UpdateSubscriptionRequest,
   MessageTemplate, SaveMessageTemplateRequest,
   SessionScanResult, SessionMessageScanResult, SearchHistoryEntry
@@ -87,16 +87,9 @@ export const updateConnectionMcpFlags = (id: number, mcpExposed: boolean, mcpAll
 export const reorderConnections = (orderedIds: number[]) =>
   fetchApi<void>('/connections/reorder', { method: 'PUT', body: JSON.stringify({ orderedIds }) });
 
-// Emulator configs
-export const getEmulatorConfigs = () => fetchApi<EmulatorConfig[]>('/emulator-configs');
-export const uploadEmulatorConfig = (fileName: string, content: string) =>
-  fetchApi<EmulatorConfig>('/emulator-configs', { method: 'POST', body: JSON.stringify({ fileName, content }) });
-export const deleteEmulatorConfig = (id: number) =>
-  fetchApi<void>(`/emulator-configs/${id}`, { method: 'DELETE' });
-
 // Service Bus entities
 export const getEntities = (connectionId: number, refreshCache = false, signal?: AbortSignal) =>
-  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[]; supportsManagement: boolean }>(
+  fetchApi<{ queues: QueueInfo[]; topics: TopicInfo[] }>(
     `/connections/${connectionId}/servicebus/entities${refreshCache ? '?refreshCache=true' : ''}`,
     { signal }
   );

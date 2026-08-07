@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Inbox, MessageSquare, Users, Search, Plus, X
 import type { Connection, QueueInfo, TopicInfo, SubscriptionInfo, SelectedEntity, SearchHistoryEntry } from '../types';
 import { createQueue, createTopic, createSubscription, deleteQueue, deleteTopic, deleteSubscription, getSearchHistory, recordSearchHistory, setSearchHistoryFavorite, deleteSearchHistory } from '../api/client';
 import EditEntityDialog from './EditEntityDialog';
+import { formatMessageCount } from '../utils/messageCounts';
 
 const subscriptionKey = (topicName: string, subName: string) => `${topicName}/${subName}`;
 const ENTITY_SEARCH_KEY = '5f0d2c2f-3d64-4f40-9e78-4f1a64d18ef3';
@@ -15,7 +16,6 @@ interface EntityBrowserProps {
   onSelectEntity: (entity: SelectedEntity | null) => void;
   onRefresh: () => void;
   loading: boolean;
-  canManage: boolean;
   // When true, the first entity item plays the swipe-demo animation (tour use).
   tourSwipeActive?: boolean;
 }
@@ -35,7 +35,7 @@ interface EditTarget {
   topicName?: string;
 }
 
-export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, canManage, tourSwipeActive }: EntityBrowserProps) {
+export default function EntityBrowser({ connection, queues, topics, selectedEntity, onSelectEntity, onRefresh, loading, tourSwipeActive }: EntityBrowserProps) {
   const [expandedTopics, setExpandedTopics] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
@@ -470,11 +470,9 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             <div className="mb-4">
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-dark-400 uppercase tracking-wider">Queues</span>
-                {canManage && (
-                  <button onClick={() => setCreateMode('queue')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Queue">
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <button onClick={() => setCreateMode('queue')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Queue">
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
               </div>
               {filteredQueues.map((queue, idx) => (
                 <EntityItem
@@ -486,8 +484,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                   isSelected={selectedEntity?.type === 'queue' && selectedEntity.name === queue.name}
                   onClick={() => onSelectEntity({ type: 'queue', name: queue.name })}
                   onDelete={() => openDeleteDialog('queue', queue.name)}
-                  onEdit={canManage ? () => openEditDialog('queue', queue.name) : undefined}
-                  isEmulator={!canManage}
+                  onEdit={() => openEditDialog('queue', queue.name)}
+                  peekDerivedCounts={connection?.isEmulator ?? false}
                   pending={pendingQueues.has(queue.name)}
                   tourId={idx === 0 ? 'entity-swipe' : undefined}
                   tourSwipeAnimate={idx === 0 ? tourSwipeActive : undefined}
@@ -502,11 +500,9 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             <div>
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-dark-400 uppercase tracking-wider">Topics</span>
-                {canManage && (
-                  <button onClick={() => setCreateMode('topic')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Topic">
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <button onClick={() => setCreateMode('topic')} className="p-1 text-dark-400 hover:text-primary-400 transition-colors" title="Create Topic">
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
               </div>
               {filteredTopics.map(topic => (
                 <div key={topic.name}>
@@ -520,9 +516,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                       toggleTopic(topic.name);
                     }}
                     onDelete={() => openDeleteDialog('topic', topic.name)}
-                    onEdit={canManage ? () => openEditDialog('topic', topic.name) : undefined}
+                    onEdit={() => openEditDialog('topic', topic.name)}
                     onAddSubscription={() => { setCreateMode('subscription'); setCreateTopicName(topic.name); }}
-                    isEmulator={!canManage}
                     pending={pendingTopics.has(topic.name)}
                   />
                   {expandedTopics.has(topic.name) && (
@@ -537,8 +532,8 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
                           isSelected={selectedEntity?.type === 'subscription' && selectedEntity.name === sub.name && selectedEntity.topicName === topic.name}
                           onClick={() => onSelectEntity({ type: 'subscription', name: sub.name, topicName: topic.name })}
                           onDelete={() => openDeleteDialog('subscription', sub.name, topic.name)}
-                          onEdit={canManage ? () => openEditDialog('subscription', sub.name, topic.name) : undefined}
-                          isEmulator={!canManage}
+                          onEdit={() => openEditDialog('subscription', sub.name, topic.name)}
+                          peekDerivedCounts={connection?.isEmulator ?? false}
                           pending={pendingSubscriptions.has(subscriptionKey(topic.name, sub.name))}
                         />
                       ))}
@@ -666,21 +661,22 @@ interface EntityItemProps {
   onClick: () => void;
   onDelete: () => void;
   onEdit?: () => void;
-  isEmulator?: boolean;
+  // True when the counts came from the API's peek-based fallback and so may be capped.
+  peekDerivedCounts?: boolean;
   pending?: boolean;
   tourId?: string;
   // When true, plays an automatic back-and-forth swipe animation to demo the gesture.
   tourSwipeAnimate?: boolean;
 }
 
-function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, isEmulator, pending, tourId, tourSwipeAnimate }: EntityItemProps) {
+function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onClick, onDelete, onEdit, peekDerivedCounts = false, pending, tourId, tourSwipeAnimate }: EntityItemProps) {
   if (pending) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
         <Loader2 className="w-4 h-4 animate-spin text-primary-400" />
         <span className="flex-1 truncate text-sm text-dark-400">{name}</span>
-        <span className="text-xs bg-dark-700 px-1.5 py-0.5 rounded text-dark-500">{activeCount}</span>
-        <span className="text-xs bg-red-500/10 text-red-300/60 px-1.5 py-0.5 rounded">{deadLetterCount}</span>
+        <span className="text-xs bg-dark-700 px-1.5 py-0.5 rounded text-dark-500">{formatMessageCount(activeCount, peekDerivedCounts)}</span>
+        <span className="text-xs bg-red-500/10 text-red-300/60 px-1.5 py-0.5 rounded">{formatMessageCount(deadLetterCount, peekDerivedCounts)}</span>
       </div>
     );
   }
@@ -694,7 +690,7 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
   const didDragRef = useRef(false);
 
   const ACTION_WIDTH = 72; // Edit + Delete buttons
-  const canSwipe = !isEmulator; // No swipe actions for emulator
+  const canSwipe = true;
 
   // Tour swipe-demo: play an automatic open → close animation to show the gesture.
   useEffect(() => {
@@ -919,9 +915,9 @@ function EntityItem({ icon, name, activeCount, deadLetterCount, isSelected, onCl
       >
         {icon}
         <span className="flex-1 truncate text-sm">{name}</span>
-        <span className="text-xs bg-dark-600 px-1.5 py-0.5 rounded">{activeCount}</span>
+        <span className="text-xs bg-dark-600 px-1.5 py-0.5 rounded">{formatMessageCount(activeCount, peekDerivedCounts)}</span>
         <span className={`text-xs px-1.5 py-0.5 rounded ${deadLetterCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-red-500/10 text-red-300'}`}>
-          {deadLetterCount}
+          {formatMessageCount(deadLetterCount, peekDerivedCounts)}
         </span>
       </div>
     </div>
@@ -937,11 +933,10 @@ interface TopicItemProps {
   onDelete: () => void;
   onEdit?: () => void;
   onAddSubscription: () => void;
-  isEmulator?: boolean;
   pending?: boolean;
 }
 
-function TopicItem({ name, subscriptionCount, isExpanded, isSelected, onClick, onDelete, onEdit, onAddSubscription, isEmulator, pending }: TopicItemProps) {
+function TopicItem({ name, subscriptionCount, isExpanded, isSelected, onClick, onDelete, onEdit, onAddSubscription, pending }: TopicItemProps) {
   if (pending) {
     return (
       <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-60 cursor-not-allowed select-none" aria-busy>
@@ -953,7 +948,7 @@ function TopicItem({ name, subscriptionCount, isExpanded, isSelected, onClick, o
     );
   }
 
-  const canSwipe = !isEmulator; // No swipe actions for emulator
+  const canSwipe = true;
 
   // For emulator, render simple non-swipeable item
   if (!canSwipe) {

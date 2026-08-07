@@ -9,7 +9,17 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
     private readonly ConcurrentDictionary<int, ServiceBusClient> _clients = new();
     private readonly ConcurrentDictionary<int, ServiceBusAdministrationClient> _adminClients = new();
     private readonly ConcurrentDictionary<int, string> _connectionStrings = new();
-    private readonly ConcurrentDictionary<int, bool> _emulatorAdminAvailable = new();
+
+    // The emulator is local, so the SDK's default retry budget (4 tries with backoff) only turns a
+    // stopped emulator into a ~90s hang. Fail fast instead and let the caller report it.
+    private static readonly ServiceBusAdministrationClientOptions EmulatorAdminOptions = new()
+    {
+        Retry =
+        {
+            MaxRetries = 1,
+            NetworkTimeout = TimeSpan.FromSeconds(5),
+        },
+    };
 
     public ServiceBusClient GetClient(int connectionId, string connectionString)
     {
@@ -56,21 +66,14 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
         return _adminClients.GetOrAdd(connectionId, _ =>
         {
             _connectionStrings[connectionId] = connectionString;
-            return new ServiceBusAdministrationClient(adminConnectionString);
+            return new ServiceBusAdministrationClient(adminConnectionString, EmulatorAdminOptions);
         });
     }
-
-    public bool? GetEmulatorAdminAvailability(int connectionId)
-        => _emulatorAdminAvailable.TryGetValue(connectionId, out var available) ? available : null;
-
-    public void SetEmulatorAdminAvailability(int connectionId, bool available)
-        => _emulatorAdminAvailable[connectionId] = available;
 
     public void InvalidateConnection(int connectionId)
     {
         _connectionStrings.TryRemove(connectionId, out _);
         _adminClients.TryRemove(connectionId, out _);
-        _emulatorAdminAvailable.TryRemove(connectionId, out _);
         
         if (_clients.TryRemove(connectionId, out var client))
         {
@@ -105,7 +108,6 @@ public class ServiceBusClientCache : IServiceBusClientCache, IAsyncDisposable
         _clients.Clear();
         _adminClients.Clear();
         _connectionStrings.Clear();
-        _emulatorAdminAvailable.Clear();
     }
 }
 

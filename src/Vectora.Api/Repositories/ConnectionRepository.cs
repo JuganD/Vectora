@@ -31,7 +31,7 @@ public class ConnectionRepository : IConnectionRepository
         return await _db.Connections.FindAsync(id);
     }
 
-    public async Task<ServiceBusConnection> CreateAsync(string name, string connectionString, bool isEmulator, int? emulatorConfigId)
+    public async Task<ServiceBusConnection> CreateAsync(string name, string connectionString, bool isEmulator)
     {
         // Append new connections at the end of the current ordering.
         var maxSortOrder = await _db.Connections.AnyAsync()
@@ -43,7 +43,6 @@ public class ConnectionRepository : IConnectionRepository
             Name = name,
             ConnectionString = connectionString,
             IsEmulator = isEmulator,
-            EmulatorConfigId = emulatorConfigId,
             SortOrder = maxSortOrder + 1
         };
         _db.Connections.Add(connection);
@@ -51,7 +50,7 @@ public class ConnectionRepository : IConnectionRepository
         return connection;
     }
 
-    public async Task<ServiceBusConnection?> UpdateAsync(int id, string name, string? connectionString, bool isEmulator, int? emulatorConfigId)
+    public async Task<ServiceBusConnection?> UpdateAsync(int id, string name, string? connectionString, bool isEmulator)
     {
         var connection = await _db.Connections.FindAsync(id);
         if (connection == null)
@@ -65,7 +64,6 @@ public class ConnectionRepository : IConnectionRepository
             connection.ConnectionString = connectionString;
         }
         connection.IsEmulator = isEmulator;
-        connection.EmulatorConfigId = emulatorConfigId;
         connection.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();

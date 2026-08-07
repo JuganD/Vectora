@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Plus, Trash2, Edit2, Save, Database, Upload, ChevronsUpDown } from 'lucide-react';
-import type { Connection, EmulatorConfig } from '../types';
-import { getConnections, createConnection, updateConnection, deleteConnection, getEmulatorConfigs, uploadEmulatorConfig, reorderConnections } from '../api/client';
+import { X, Plus, Trash2, Edit2, Save, Database, ChevronsUpDown } from 'lucide-react';
+import type { Connection } from '../types';
+import { getConnections, createConnection, updateConnection, deleteConnection, reorderConnections } from '../api/client';
 
 // Touch devices get long-press-to-drag on the whole row; pointer devices get a grip button.
 function useIsTouch() {
@@ -23,10 +23,9 @@ interface ConnectionManagerProps {
 
 export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [emulatorConfigs, setEmulatorConfigs] = useState<EmulatorConfig[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [formData, setFormData] = useState({ name: '', connectionString: '', isEmulator: false, emulatorConfigId: undefined as number | undefined });
+  const [formData, setFormData] = useState({ name: '', connectionString: '', isEmulator: false });
   const [error, setError] = useState('');
   const [draggingId, setDraggingId] = useState<number | null>(null);
 
@@ -62,9 +61,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
 
   const loadData = async () => {
     try {
-      const [conns, configs] = await Promise.all([getConnections(), getEmulatorConfigs()]);
-      setConnections(conns);
-      setEmulatorConfigs(configs);
+      setConnections(await getConnections());
     } catch (err) {
       console.error('Failed to load data:', err);
     }
@@ -89,7 +86,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
       await loadData();
       setIsAdding(false);
       setEditingId(null);
-      setFormData({ name: '', connectionString: '', isEmulator: false, emulatorConfigId: undefined });
+      setFormData({ name: '', connectionString: '', isEmulator: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
     }
@@ -97,7 +94,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
 
   const handleEdit = (conn: Connection) => {
     setEditingId(conn.id);
-    setFormData({ name: conn.name, connectionString: conn.connectionString, isEmulator: conn.isEmulator, emulatorConfigId: conn.emulatorConfigId });
+    setFormData({ name: conn.name, connectionString: conn.connectionString, isEmulator: conn.isEmulator });
     setIsAdding(false);
   };
 
@@ -114,13 +111,13 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
   const handleAdd = () => {
     setIsAdding(true);
     setEditingId(null);
-    setFormData({ name: '', connectionString: '', isEmulator: false, emulatorConfigId: undefined });
+    setFormData({ name: '', connectionString: '', isEmulator: false });
   };
 
   const handleCancel = () => {
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ name: '', connectionString: '', isEmulator: false, emulatorConfigId: undefined });
+    setFormData({ name: '', connectionString: '', isEmulator: false });
     setError('');
   };
 
@@ -257,7 +254,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
                 className={`p-3 rounded-lg border transition-transform ${editingId === conn.id ? 'border-primary-500 bg-primary-500/10' : 'border-dark-600 bg-dark-700/50'} ${isDragging ? 'scale-[1.02] shadow-lg shadow-black/40 border-primary-500 relative z-10 select-none' : ''} ${draggingId != null && !isDragging ? 'opacity-60' : ''}`}
               >
                 {editingId === conn.id ? (
-                  <ConnectionForm formData={formData} setFormData={setFormData} emulatorConfigs={emulatorConfigs} onSave={handleSave} onCancel={handleCancel} onConfigUploaded={loadData} />
+                  <ConnectionForm formData={formData} setFormData={setFormData} onSave={handleSave} onCancel={handleCancel} />
                 ) : (
                   <div className="flex items-center justify-between">
                     <div className="min-w-0">
@@ -293,7 +290,7 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
           {/* Add New Connection */}
           {isAdding ? (
             <div className="p-3 rounded-lg border border-primary-500 bg-primary-500/10">
-              <ConnectionForm formData={formData} setFormData={setFormData} emulatorConfigs={emulatorConfigs} onSave={handleSave} onCancel={handleCancel} onConfigUploaded={loadData} />
+              <ConnectionForm formData={formData} setFormData={setFormData} onSave={handleSave} onCancel={handleCancel} />
             </div>
           ) : (
             <button onClick={handleAdd} className="w-full p-3 border border-dashed border-dark-500 rounded-lg text-dark-400 hover:text-white hover:border-primary-500 transition-colors flex items-center justify-center gap-2">
@@ -307,36 +304,13 @@ export default function ConnectionManager({ onClose }: ConnectionManagerProps) {
 }
 
 interface ConnectionFormProps {
-  formData: { name: string; connectionString: string; isEmulator: boolean; emulatorConfigId: number | undefined };
-  setFormData: React.Dispatch<React.SetStateAction<{ name: string; connectionString: string; isEmulator: boolean; emulatorConfigId: number | undefined }>>;
-  emulatorConfigs: EmulatorConfig[];
+  formData: { name: string; connectionString: string; isEmulator: boolean };
+  setFormData: React.Dispatch<React.SetStateAction<{ name: string; connectionString: string; isEmulator: boolean }>>;
   onSave: () => void;
   onCancel: () => void;
-  onConfigUploaded: () => void;
 }
 
-function ConnectionForm({ formData, setFormData, emulatorConfigs, onSave, onCancel, onConfigUploaded }: ConnectionFormProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    try {
-      const content = await file.text();
-      const config = await uploadEmulatorConfig(file.name, content);
-      setFormData(d => ({ ...d, emulatorConfigId: config.id }));
-      onConfigUploaded();
-    } catch (err) {
-      console.error('Failed to upload config:', err);
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
+function ConnectionForm({ formData, setFormData, onSave, onCancel }: ConnectionFormProps) {
   return (
     <div className="space-y-3">
       <input type="text" placeholder="Connection Name" value={formData.name} onChange={e => setFormData(d => ({ ...d, name: e.target.value }))} className="w-full px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
@@ -346,27 +320,10 @@ function ConnectionForm({ formData, setFormData, emulatorConfigs, onSave, onCanc
         This is an emulator connection
       </label>
       {formData.isEmulator && (
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <select
-              value={formData.emulatorConfigId ?? ''}
-              onChange={e => setFormData(d => ({ ...d, emulatorConfigId: e.target.value ? Number(e.target.value) : undefined }))}
-              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-            >
-              <option value="">Select emulator config...</option>
-              {emulatorConfigs.map(c => <option key={c.id} value={c.id}>{c.fileName}</option>)}
-            </select>
-            <input type="file" ref={fileInputRef} accept=".json" onChange={handleFileUpload} className="hidden" />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="px-3 py-2 bg-dark-600 hover:bg-dark-500 text-white text-sm rounded-lg flex items-center gap-1 disabled:opacity-50"
-            >
-              <Upload className="w-4 h-4" /> {uploading ? 'Uploading...' : 'Upload'}
-            </button>
-          </div>
-          <p className="text-xs text-dark-400">Upload a new config file or select an existing one</p>
-        </div>
+        <p className="text-xs text-dark-400">
+          Entities are read from the emulator's management API. Requires an Azure Service Bus Emulator
+          build that serves the management API (SDK 7.20 or newer).
+        </p>
       )}
       <div className="flex gap-2">
         <button onClick={onSave} className="px-3 py-1.5 bg-primary-500 hover:bg-primary-400 text-white text-sm rounded-lg flex items-center gap-1"><Save className="w-3.5 h-3.5" /> Save</button>

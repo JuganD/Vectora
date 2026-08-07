@@ -10,7 +10,6 @@ public class VectoraDbContext : DbContext
     }
 
     public DbSet<ServiceBusConnection> Connections { get; set; }
-    public DbSet<EmulatorConfigFile> EmulatorConfigs { get; set; }
     public DbSet<Setting> Settings { get; set; }
     public DbSet<MessageTemplate> MessageTemplates { get; set; }
     public DbSet<SearchHistoryEntry> SearchHistoryEntries { get; set; }
@@ -23,14 +22,6 @@ public class VectoraDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.ConnectionString).IsRequired();
             entity.HasIndex(e => e.Name).IsUnique();
-        });
-
-        modelBuilder.Entity<EmulatorConfigFile>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.FileName).IsRequired().HasMaxLength(200);
-            entity.Property(e => e.Content).IsRequired();
-            entity.HasIndex(e => e.FileName).IsUnique();
         });
 
         modelBuilder.Entity<Setting>(entity =>

@@ -26,8 +26,6 @@ builder.Services.AddScoped<ISettingsRepository, SettingsRepository>();
 
 // Add services
 builder.Services.AddSingleton<IJwtService, JwtService>();
-builder.Services.AddScoped<IEmulatorConfigFileService, EmulatorConfigFileService>();
-builder.Services.AddScoped<IEmulatorConfigService, EmulatorConfigService>();
 builder.Services.AddScoped<IServiceBusService, ServiceBusService>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IMessageTemplateService, MessageTemplateService>();
@@ -92,7 +90,6 @@ app.MapMcp("/mcp").RequireCors("McpCors");
 // Map minimal API endpoints
 app.MapAuthEndpoints();
 app.MapConnectionEndpoints();
-app.MapEmulatorConfigEndpoints();
 app.MapServiceBusEndpoints();
 app.MapServiceBusMessageEndpoints();
 app.MapSettingsEndpoints();

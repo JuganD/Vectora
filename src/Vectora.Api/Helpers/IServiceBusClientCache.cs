@@ -12,9 +12,6 @@ public interface IServiceBusClientCache
     // adminConnectionString (management port) is what the client is built from.
     ServiceBusAdministrationClient GetEmulatorAdminClient(int connectionId, string connectionString, string adminConnectionString);
 
-    bool? GetEmulatorAdminAvailability(int connectionId);
-    void SetEmulatorAdminAvailability(int connectionId, bool available);
-
     void InvalidateConnection(int connectionId);
 }
 

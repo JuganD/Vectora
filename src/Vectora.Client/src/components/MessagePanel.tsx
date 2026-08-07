@@ -5,6 +5,7 @@ import { peekQueueMessages, peekSubscriptionMessages, receiveQueueMessages, rece
 import MessageViewer from './MessageViewer';
 import SendMessageDialog from './SendMessageDialog';
 import { formatDateTime, useDateFormat } from '../utils/dateFormat';
+import { formatMessageCount } from '../utils/messageCounts';
 import DatePicker from './DatePicker';
 
 const PANEL_RATIO_KEY = 'vectora_message_panel_ratio';
@@ -957,14 +958,14 @@ export default function MessagePanel({ connection, selectedEntity, queues, topic
             }`}>Dead Letter Queue</p>
           </div>
           {/* Message counts */}
-          {!connection.isEmulator && entityInfo && 'activeMessageCount' in entityInfo && (
+          {entityInfo && 'activeMessageCount' in entityInfo && (
             <div className="flex items-center gap-1 sm:gap-2 ml-1 md:ml-4 flex-shrink-0">
               <span className="text-[11px] sm:text-xs bg-dark-600 px-2 py-1 rounded whitespace-nowrap">
-                <span className="sm:hidden">A: {entityInfo.activeMessageCount}</span>
-                <span className="hidden sm:inline">Active: {entityInfo.activeMessageCount}</span>
+                <span className="sm:hidden">A: {formatMessageCount(entityInfo.activeMessageCount, connection.isEmulator)}</span>
+                <span className="hidden sm:inline">Active: {formatMessageCount(entityInfo.activeMessageCount, connection.isEmulator)}</span>
               </span>
               <span className={`text-xs px-2 py-1 rounded ${entityInfo.deadLetterMessageCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-red-500/10 text-red-300'}`}>
-                DLQ: {entityInfo.deadLetterMessageCount}
+                DLQ: {formatMessageCount(entityInfo.deadLetterMessageCount, connection.isEmulator)}
               </span>
             </div>
           )}

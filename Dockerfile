@@ -21,9 +21,8 @@ WORKDIR /app
 # Install curl for health checks
 RUN apk add --no-cache curl
 
-# Create directories for data and emulator configs with proper permissions
-RUN mkdir -p /data /emulator-configs && \
-    chown -R app:app /data /emulator-configs
+# Create the data directory with proper permissions
+RUN mkdir -p /data && chown -R app:app /data
 
 # Copy backend
 COPY --from=backend-build /app/out ./
@@ -34,7 +33,6 @@ COPY --from=frontend-build /app/frontend/dist ./wwwroot
 # Set environment variables
 ENV ASPNETCORE_URLS=http://+:8080
 ENV DataPath=/data
-ENV EmulatorConfigPath=/emulator-configs
 ENV ASPNETCORE_ENVIRONMENT=Production
 
 # Expose port

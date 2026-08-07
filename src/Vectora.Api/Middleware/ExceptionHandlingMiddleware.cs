@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using Azure.Messaging.ServiceBus;
 
 namespace Vectora.Api.Middleware;
@@ -56,6 +57,17 @@ public class ExceptionHandlingMiddleware
                 context.Request.Method, context.Request.Path);
             await HandleExceptionAsync(context, sbEx, HttpStatusCode.BadGateway, "Service Bus error");
         }
+        catch (Exception ex) when (IsConnectionFailure(ex))
+        {
+            // The administration API is HTTP, so an unreachable host surfaces as a socket error
+            // wrapped by the Azure.Core retry pipeline rather than as a ServiceBusException. The
+            // common cause is an emulator that isn't running, or one too old to serve the
+            // management API, so say that instead of reporting a generic 500.
+            _logger.LogWarning(ex, "Could not reach the Service Bus management API for request {Method} {Path}",
+                context.Request.Method, context.Request.Path);
+            await HandleExceptionAsync(context, ex, HttpStatusCode.BadGateway,
+                "Could not reach the Service Bus management API. If this is an emulator, check that it is running and that it serves the management API (Azure Service Bus Emulator with SDK 7.20 or newer, admin port 5300 by default).");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unhandled exception for request {Method} {Path}",
@@ -64,6 +76,17 @@ public class ExceptionHandlingMiddleware
             await HandleExceptionAsync(context, ex);
         }
     }
+
+    // A dead host reaches us as a socket error (connection refused) or a network timeout (traffic
+    // silently dropped), wrapped in the AggregateException that Azure.Core throws once its retry
+    // budget is spent. A bare cancellation is deliberately NOT matched here: that is a client
+    // disconnect, handled as 499 by the first catch above.
+    private static bool IsConnectionFailure(Exception exception) => exception switch
+    {
+        SocketException or HttpRequestException or TimeoutException => true,
+        AggregateException agg => agg.InnerExceptions.Any(e => e is TaskCanceledException || IsConnectionFailure(e)),
+        _ => exception.InnerException is { } inner && IsConnectionFailure(inner),
+    };
 
     private async Task HandleExceptionAsync(HttpContext context, Exception exception, HttpStatusCode? overrideStatus = null, string? overrideMessage = null)
     {

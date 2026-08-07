@@ -1,5 +1,3 @@
-using System.Net.Sockets;
-
 namespace Vectora.Api.Helpers;
 
 // The emulator serves the management API on a separate HTTP port (5300 by default) from the
@@ -27,41 +25,5 @@ public static class EmulatorAdmin
             return string.Join(';', segments);
         }
         return connectionString;
-    }
-
-    public static (string Host, int Port)? GetAdminEndpoint(string connectionString, int adminPort = DefaultAdminPort)
-    {
-        foreach (var segment in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var eq = segment.IndexOf('=');
-            if (eq < 0) continue;
-
-            var key = segment[..eq].Trim();
-            if (!key.Equals("Endpoint", StringComparison.OrdinalIgnoreCase)) continue;
-
-            var endpoint = segment[(eq + 1)..].Trim();
-            if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
-            {
-                return (uri.Host, adminPort);
-            }
-            return null;
-        }
-        return null;
-    }
-
-    public static async Task<bool> IsPortReachableAsync(string host, int port, TimeSpan timeout, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(timeout);
-            using var client = new TcpClient();
-            await client.ConnectAsync(host, port, cts.Token);
-            return client.Connected;
-        }
-        catch
-        {
-            return false;
-        }
     }
 }

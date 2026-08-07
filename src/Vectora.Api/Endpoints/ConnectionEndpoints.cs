@@ -65,7 +65,7 @@ public static class ConnectionEndpoints
             return Results.BadRequest(new { error = connError });
         }
 
-        var connection = await connectionRepository.CreateAsync(dto.Name, dto.ConnectionString, dto.IsEmulator, dto.EmulatorConfigId);
+        var connection = await connectionRepository.CreateAsync(dto.Name, dto.ConnectionString, dto.IsEmulator);
         return Results.Created($"/api/connections/{connection.Id}", ToDto(connection));
     }
 
@@ -87,7 +87,7 @@ public static class ConnectionEndpoints
             }
         }
 
-        var connection = await connectionRepository.UpdateAsync(id, dto.Name, dto.ConnectionString, dto.IsEmulator, dto.EmulatorConfigId);
+        var connection = await connectionRepository.UpdateAsync(id, dto.Name, dto.ConnectionString, dto.IsEmulator);
         if (connection == null)
         {
             return Results.NotFound();
@@ -135,7 +135,6 @@ public static class ConnectionEndpoints
         Name = c.Name,
         ConnectionString = c.ConnectionString,
         IsEmulator = c.IsEmulator,
-        EmulatorConfigId = c.EmulatorConfigId,
         McpExposed = c.McpExposed,
         McpAllowSend = c.McpAllowSend,
         SortOrder = c.SortOrder

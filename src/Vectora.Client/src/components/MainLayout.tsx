@@ -47,7 +47,6 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
   const [queues, setQueues] = useState<QueueInfo[]>([]);
   const [topics, setTopics] = useState<TopicInfo[]>([]);
-  const [supportsManagement, setSupportsManagement] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [loading, setLoading] = useState(false);
   const [showConnectionManager, setShowConnectionManager] = useState(false);
@@ -69,7 +68,7 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (isMobile && entity) {
       setShowMobileSidebar(false);
     }
-    if (entity && selectedConnection && supportsManagement) {
+    if (entity && selectedConnection) {
       updateEntityCount(entity);
     }
   };
@@ -96,10 +95,9 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
   const selectedConnectionRef = useRef(selectedConnection);
   selectedConnectionRef.current = selectedConnection;
 
-  const applyEntities = useCallback((data: { queues: QueueInfo[]; topics: TopicInfo[]; supportsManagement: boolean }) => {
+  const applyEntities = useCallback((data: { queues: QueueInfo[]; topics: TopicInfo[] }) => {
     setQueues(data.queues);
     setTopics(data.topics);
-    setSupportsManagement(data.supportsManagement);
   }, []);
 
   const refreshConnection = useCallback(async (connectionId: number) => {
@@ -223,13 +221,11 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
     if (!conn) {
       setQueues([]);
       setTopics([]);
-      setSupportsManagement(false);
       setLoading(false);
       return;
     }
     setQueues([]);
     setTopics([]);
-    setSupportsManagement(false);
     openConnection(conn.id);
   }, [selectedConnection, openConnection]);
 
@@ -282,7 +278,6 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
 
   const effectiveQueues: QueueInfo[] = tourNeedsEntityBrowser ? TOUR_DUMMY_QUEUES : queues;
   const effectiveTopics = tourNeedsEntityBrowser ? TOUR_DUMMY_TOPICS : topics;
-  const effectiveSupportsManagement = tourNeedsEntityBrowser ? true : supportsManagement;
 
   const effectiveSelectedEntity: SelectedEntity | null = tourNeedsMessagePanel
     ? TOUR_DUMMY_SELECTED_ENTITY
@@ -500,7 +495,6 @@ export default function MainLayout({ onLogout, showLogout = true }: MainLayoutPr
             onSelectEntity={handleSelectEntity}
             onRefresh={tourNeedsEntityBrowser ? () => {} : refreshEntities}
             loading={tourNeedsEntityBrowser ? false : loading}
-            canManage={effectiveSupportsManagement}
             tourSwipeActive={tourIsEntitySwipe}
           />
         </div>

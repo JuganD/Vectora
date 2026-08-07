@@ -3,7 +3,6 @@ export interface Connection {
   name: string;
   connectionString: string;
   isEmulator: boolean;
-  emulatorConfigId?: number;
   mcpExposed: boolean;
   mcpAllowSend: boolean;
   sortOrder: number;
@@ -135,18 +134,10 @@ export interface SubscriptionProperties {
   forwardDeadLetteredMessagesTo?: string;
 }
 
-export interface EmulatorConfig {
-  id: number;
-  fileName: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface CreateConnectionRequest {
   name: string;
   connectionString: string;
   isEmulator: boolean;
-  emulatorConfigId?: number;
 }
 
 export interface CreateQueueRequest {

@@ -9,17 +9,15 @@ namespace Vectora.Api.Services;
 public class ServiceBusService : IServiceBusService
 {
     private readonly IConnectionRepository _connectionRepository;
-    private readonly IEmulatorConfigService _emulatorConfigService;
     private readonly IServiceBusClientCache _clientCache;
     private readonly IServiceBusEntityCache _entityCache;
     private readonly ISettingsService _settingsService;
     private readonly ILogger<ServiceBusService> _logger;
     private readonly int _emulatorAdminPort;
 
-    public ServiceBusService(IConnectionRepository connectionRepository, IEmulatorConfigService emulatorConfigService, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService, ILogger<ServiceBusService> logger, IConfiguration configuration)
+    public ServiceBusService(IConnectionRepository connectionRepository, IServiceBusClientCache clientCache, IServiceBusEntityCache entityCache, ISettingsService settingsService, ILogger<ServiceBusService> logger, IConfiguration configuration)
     {
         _connectionRepository = connectionRepository;
-        _emulatorConfigService = emulatorConfigService;
         _clientCache = clientCache;
         _entityCache = entityCache;
         _settingsService = settingsService;
@@ -27,95 +25,51 @@ public class ServiceBusService : IServiceBusService
         _emulatorAdminPort = configuration.GetValue<int?>("EmulatorAdminPort") ?? EmulatorAdmin.DefaultAdminPort;
     }
 
-    private static readonly TimeSpan EmulatorAdminProbeTimeout = TimeSpan.FromSeconds(2);
-
-    // Pass forceProbe to re-probe (e.g. on an explicit refresh) so an emulator started after the
-    // first check is picked up; otherwise the cached result on the client cache is reused.
-    private async Task<bool> IsEmulatorAdminAvailableAsync(ServiceBusConnection connection, bool forceProbe, CancellationToken cancellationToken)
-    {
-        if (!connection.IsEmulator) return false;
-
-        if (!forceProbe)
-        {
-            var cached = _clientCache.GetEmulatorAdminAvailability(connection.Id);
-            if (cached.HasValue) return cached.Value;
-        }
-
-        var endpoint = EmulatorAdmin.GetAdminEndpoint(connection.ConnectionString, _emulatorAdminPort);
-        var available = endpoint.HasValue
-            && await EmulatorAdmin.IsPortReachableAsync(endpoint.Value.Host, endpoint.Value.Port, EmulatorAdminProbeTimeout, cancellationToken);
-        _clientCache.SetEmulatorAdminAvailability(connection.Id, available);
-        return available;
-    }
-
-    // Returns the admin client for entity management, or null for an emulator whose management
-    // port is unreachable (the caller then falls back to the stored emulator config).
-    private async Task<ServiceBusAdministrationClient?> GetManagementClientAsync(ServiceBusConnection connection, bool forceProbe = false, CancellationToken cancellationToken = default)
+    // The administration client for entity management. Emulators are driven through the same client
+    // as real Service Bus, just pointed at the management port; Vectora requires an emulator build
+    // that serves the management API (Azure Service Bus Emulator with SDK >= 7.20). If it isn't
+    // listening, admin calls surface the failure rather than degrading to a partial view.
+    private ServiceBusAdministrationClient GetManagementClient(ServiceBusConnection connection)
     {
         if (!connection.IsEmulator)
         {
             return _clientCache.GetAdminClient(connection.Id, connection.ConnectionString);
         }
 
-        if (!await IsEmulatorAdminAvailableAsync(connection, forceProbe, cancellationToken))
-        {
-            return null;
-        }
-
         var adminConnectionString = EmulatorAdmin.BuildAdminConnectionString(connection.ConnectionString, _emulatorAdminPort);
         return _clientCache.GetEmulatorAdminClient(connection.Id, connection.ConnectionString, adminConnectionString);
     }
 
-    public async Task<(List<QueueInfoDto> Queues, List<TopicInfoDto> Topics, bool SupportsManagement)?> GetEntitiesAsync(int connectionId, bool refreshCache = false, CancellationToken cancellationToken = default)
+    public async Task<(List<QueueInfoDto> Queues, List<TopicInfoDto> Topics)?> GetEntitiesAsync(int connectionId, bool refreshCache = false, CancellationToken cancellationToken = default)
     {
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
         if (!refreshCache && _entityCache.TryGet(connectionId, out var cached))
         {
-            return (cached.Queues, cached.Topics, cached.SupportsManagement);
+            return (cached.Queues, cached.Topics);
         }
 
         var queues = new List<QueueInfoDto>();
         var topics = new List<TopicInfoDto>();
 
-        var adminClient = await GetManagementClientAsync(connection, forceProbe: refreshCache, cancellationToken);
-        var supportsManagement = adminClient != null;
+        await PopulateFromAdminAsync(GetManagementClient(connection), connection, queues, topics, cancellationToken);
 
-        if (adminClient != null)
+        // The emulator enumerates entities correctly but reports every message count as zero, so
+        // its counts are the one thing that still has to be derived by browsing.
+        if (connection.IsEmulator)
         {
-            try
-            {
-                await PopulateFromAdminAsync(adminClient, connection, queues, topics, cancellationToken);
-            }
-            catch (Exception ex) when (connection.IsEmulator && ex is not OperationCanceledException)
-            {
-                // An old emulator can answer the TCP probe on the admin port without actually
-                // implementing the management REST API, so enumeration throws. Don't let that
-                // hide the entities: mark management unavailable and fall back to the stored
-                // config (names only, zero counts) so the user can still browse and read messages.
-                _logger.LogWarning(ex, "Emulator admin enumeration failed for connection '{Name}' (id {Id}); falling back to the stored config.", connection.Name, connectionId);
-                _clientCache.SetEmulatorAdminAvailability(connectionId, false);
-                supportsManagement = false;
-                queues.Clear();
-                topics.Clear();
-                await PopulateFromConfigAsync(connection, queues, topics);
-            }
-        }
-        else
-        {
-            // Emulator with no reachable management API: fall back to the stored config (zero counts).
-            await PopulateFromConfigAsync(connection, queues, topics);
+            await FillEmulatorCountsAsync(connection, queues, topics, cancellationToken);
         }
 
         var orderedQueues = queues.OrderBy(q => q.Name).ToList();
         var orderedTopics = topics.OrderBy(t => t.Name).ToList();
-        _entityCache.Set(connectionId, orderedQueues, orderedTopics, supportsManagement);
-        return (orderedQueues, orderedTopics, supportsManagement);
+        _entityCache.Set(connectionId, orderedQueues, orderedTopics);
+        return (orderedQueues, orderedTopics);
     }
 
-    // Enumerate entities and real message counts through the administration client (real Service
-    // Bus, or an emulator whose management API is reachable).
+    // Enumerate entities and message counts through the administration client. Counts are accurate
+    // for real Service Bus; the emulator returns zeros, which FillEmulatorCountsAsync replaces.
     private static async Task PopulateFromAdminAsync(ServiceBusAdministrationClient adminClient, ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics, CancellationToken cancellationToken)
     {
         // RequiresSession lives on the entity properties (not the runtime properties that
@@ -148,21 +102,39 @@ public class ServiceBusService : IServiceBusService
         }
     }
 
-    // Read entity names from the stored emulator config (no message counts). Used when the
-    // emulator's management API is unavailable; no-op if the connection has no linked config.
-    private async Task PopulateFromConfigAsync(ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics)
+    // Replaces the emulator's always-zero runtime counts with peek-derived ones. See
+    // CountByPeekAsync for why this is necessary and what it costs.
+    private async Task FillEmulatorCountsAsync(ServiceBusConnection connection, List<QueueInfoDto> queues, List<TopicInfoDto> topics, CancellationToken cancellationToken)
     {
-        if (!connection.EmulatorConfigId.HasValue) return;
+        var client = _clientCache.GetClient(connection.Id, connection.ConnectionString);
 
-        var queueConfigs = await _emulatorConfigService.GetQueuesFromConfigAsync(connection.EmulatorConfigId.Value);
-        queues.AddRange(queueConfigs.Select(q => new QueueInfoDto { Name = q.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, IsEmulator = true, RequiresSession = q.RequiresSession }));
-
-        var topicData = await _emulatorConfigService.GetTopicsFromConfigAsync(connection.EmulatorConfigId.Value);
-        topics.AddRange(topicData.Select(t => new TopicInfoDto
+        var work = new List<Func<Task>>();
+        foreach (var queue in queues)
         {
-            Name = t.TopicName,
-            Subscriptions = t.Subscriptions.Select(s => new SubscriptionInfoDto { Name = s.Name, ActiveMessageCount = 0, DeadLetterMessageCount = 0, RequiresSession = s.RequiresSession }).ToList(),
-            IsEmulator = true
+            work.Add(async () => queue.ActiveMessageCount = await CountByPeekAsync(client, queue.Name, null, false, cancellationToken));
+            work.Add(async () => queue.DeadLetterMessageCount = await CountByPeekAsync(client, queue.Name, null, true, cancellationToken));
+        }
+        foreach (var topic in topics)
+        {
+            foreach (var sub in topic.Subscriptions)
+            {
+                work.Add(async () => sub.ActiveMessageCount = await CountByPeekAsync(client, topic.Name, sub.Name, false, cancellationToken));
+                work.Add(async () => sub.DeadLetterMessageCount = await CountByPeekAsync(client, topic.Name, sub.Name, true, cancellationToken));
+            }
+        }
+
+        using var throttle = new SemaphoreSlim(EmulatorCountConcurrency);
+        await Task.WhenAll(work.Select(async item =>
+        {
+            await throttle.WaitAsync(cancellationToken);
+            try
+            {
+                await item();
+            }
+            finally
+            {
+                throttle.Release();
+            }
         }));
     }
 
@@ -171,8 +143,21 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        // The emulator reports zero through the management API, so derive the counts by peeking.
+        // This needs no admin API, so it also works for emulators without a reachable one.
+        if (connection.IsEmulator)
+        {
+            var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+            return new QueueInfoDto
+            {
+                Name = queueName,
+                ActiveMessageCount = await CountByPeekAsync(client, queueName, null, false, CancellationToken.None),
+                DeadLetterMessageCount = await CountByPeekAsync(client, queueName, null, true, CancellationToken.None),
+                IsEmulator = true
+            };
+        }
+
+        var adminClient = GetManagementClient(connection);
         try
         {
             var props = await adminClient.GetQueueRuntimePropertiesAsync(queueName);
@@ -195,8 +180,19 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        // Same emulator limitation as GetQueueRuntimeInfoAsync: counts come from peeking.
+        if (connection.IsEmulator)
+        {
+            var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+            return new SubscriptionInfoDto
+            {
+                Name = subscriptionName,
+                ActiveMessageCount = await CountByPeekAsync(client, topicName, subscriptionName, false, CancellationToken.None),
+                DeadLetterMessageCount = await CountByPeekAsync(client, topicName, subscriptionName, true, CancellationToken.None)
+            };
+        }
+
+        var adminClient = GetManagementClient(connection);
         try
         {
             var props = await adminClient.GetSubscriptionRuntimePropertiesAsync(topicName, subscriptionName);
@@ -707,6 +703,109 @@ public class ServiceBusService : IServiceBusService
             : client.CreateReceiver(entityPath, options);
     }
 
+    // The emulator's management API does not track message counts: its QueueDescription /
+    // SubscriptionDescription omit CountDetails entirely and hardcode MessageCount to 0, so
+    // GetQueuesRuntimePropertiesAsync always reports zero even when the entity holds messages.
+    // Counts therefore have to be derived by browsing. Peek never locks or consumes, so this is
+    // safe, but it is O(messages) — hence the cap. Browsing stops once either the counted total or
+    // the number of messages scanned reaches the cap, and the result is flagged Capped so callers
+    // can render it as "1000+". Reaching the cap is reported as capped even if the entity happens
+    // to hold exactly the cap: confirming that would cost another round trip for no real benefit.
+    private const int EmulatorCountPeekCap = 1000;
+    private const int EmulatorCountPeekPageSize = 250;
+
+    // Max entities counted concurrently. The cached ServiceBusClient multiplexes links over one
+    // connection, so this only bounds how many peek loops are in flight at once.
+    private const int EmulatorCountConcurrency = 8;
+
+    // Counts messages by peeking, up to EmulatorCountPeekCap. Returns 0 if browsing fails so a
+    // single unreadable entity can't take down the whole entity listing. A count that reaches the
+    // cap is the client's cue to render "N+" — keep EmulatorCountPeekCap in sync with the
+    // PEEK_COUNT_CAP constant in the client's EntityBrowser.
+    private async Task<long> CountByPeekAsync(ServiceBusClient client, string entityPath, string? subscriptionName, bool deadLetter, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, deadLetter);
+
+            long count = 0;
+            long? nextSequenceNumber = null;
+
+            // Bounded by the count rather than by messages scanned, so that reaching the cap is
+            // exactly what "there may be more" means — that equivalence is what lets the client
+            // decide to render "N+" from the number alone.
+            while (count < EmulatorCountPeekCap)
+            {
+                var pageSize = (int)Math.Min(EmulatorCountPeekPageSize, EmulatorCountPeekCap - count);
+                var batch = nextSequenceNumber.HasValue
+                    ? await receiver.PeekMessagesAsync(pageSize, nextSequenceNumber.Value, cancellationToken)
+                    : await receiver.PeekMessagesAsync(pageSize, cancellationToken: cancellationToken);
+
+                if (batch.Count == 0) break;
+
+                // Peek also surfaces scheduled and deferred messages, which the portal's active
+                // count excludes. The dead-letter subqueue has no such states, so count it whole.
+                count += deadLetter
+                    ? batch.Count
+                    : batch.Count(m => m.State == ServiceBusMessageState.Active);
+
+                nextSequenceNumber = batch[^1].SequenceNumber + 1;
+            }
+
+            return count;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Peek-based count failed for '{Path}'; reporting 0.", GetReceiverPath(entityPath, subscriptionName, deadLetter));
+            return 0;
+        }
+    }
+
+    // Peek-derived equivalent of the runtime message counts, for the emulator. Active/scheduled/
+    // deferred come from one browse of the entity (classified by message state) and the dead-letter
+    // count from a browse of its subqueue. Transfer counts have no browsable representation, so
+    // they stay 0 — they only ever apply to in-flight forwarding, which the emulator doesn't do.
+    private async Task<(long Active, long Scheduled, long DeadLetter, long Total)> CountByPeekBreakdownAsync(
+        ServiceBusClient client, string entityPath, string? subscriptionName, CancellationToken cancellationToken)
+    {
+        long active = 0, scheduled = 0, other = 0;
+
+        try
+        {
+            await using var receiver = CreateBrowseReceiver(client, entityPath, subscriptionName, false);
+
+            long scanned = 0;
+            long? nextSequenceNumber = null;
+
+            while (scanned < EmulatorCountPeekCap)
+            {
+                var pageSize = (int)Math.Min(EmulatorCountPeekPageSize, EmulatorCountPeekCap - scanned);
+                var batch = nextSequenceNumber.HasValue
+                    ? await receiver.PeekMessagesAsync(pageSize, nextSequenceNumber.Value, cancellationToken)
+                    : await receiver.PeekMessagesAsync(pageSize, cancellationToken: cancellationToken);
+
+                if (batch.Count == 0) break;
+
+                foreach (var message in batch)
+                {
+                    if (message.State == ServiceBusMessageState.Active) active++;
+                    else if (message.State == ServiceBusMessageState.Scheduled) scheduled++;
+                    else other++;
+                }
+
+                scanned += batch.Count;
+                nextSequenceNumber = batch[^1].SequenceNumber + 1;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Peek-based count failed for '{Path}'; reporting 0.", GetReceiverPath(entityPath, subscriptionName, false));
+        }
+
+        var deadLetter = await CountByPeekAsync(client, entityPath, subscriptionName, true, cancellationToken);
+        return (active, scheduled, deadLetter, active + scheduled + other + deadLetter);
+    }
+
     private static string GetReceiverPath(string entityPath, string? subscriptionName, bool deadLetter)
     {
         if (subscriptionName != null)
@@ -888,8 +987,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        var adminClient = GetManagementClient(connection);
         var props = (await adminClient.GetQueueAsync(queueName)).Value;
         var dto = new QueuePropertiesDto
         {
@@ -924,6 +1022,15 @@ public class ServiceBusService : IServiceBusService
             dto.TransferMessageCount = rt.TransferMessageCount;
             dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
             dto.SizeInBytes = rt.SizeInBytes;
+
+            // The emulator's runtime properties are always zero, so browse for the real counts.
+            if (connection.IsEmulator)
+            {
+                var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+                var counts = await CountByPeekBreakdownAsync(client, queueName, null, CancellationToken.None);
+                (dto.ActiveMessageCount, dto.ScheduledMessageCount, dto.DeadLetterMessageCount, dto.TotalMessageCount) = counts;
+            }
+
             dto.CreatedAt = rt.CreatedAt;
             dto.UpdatedAt = rt.UpdatedAt;
             dto.AccessedAt = rt.AccessedAt;
@@ -940,8 +1047,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        var adminClient = GetManagementClient(connection);
         var props = (await adminClient.GetTopicAsync(topicName)).Value;
         var dto = new TopicPropertiesDto
         {
@@ -981,8 +1087,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        var adminClient = GetManagementClient(connection);
         var props = (await adminClient.GetSubscriptionAsync(topicName, subscriptionName)).Value;
         var dto = new SubscriptionPropertiesDto
         {
@@ -1010,6 +1115,15 @@ public class ServiceBusService : IServiceBusService
             dto.DeadLetterMessageCount = rt.DeadLetterMessageCount;
             dto.TransferMessageCount = rt.TransferMessageCount;
             dto.TransferDeadLetterMessageCount = rt.TransferDeadLetterMessageCount;
+
+            // Same emulator limitation as GetQueuePropertiesAsync.
+            if (connection.IsEmulator)
+            {
+                var client = _clientCache.GetClient(connectionId, connection.ConnectionString);
+                var (active, _, deadLetter, total) = await CountByPeekBreakdownAsync(client, topicName, subscriptionName, CancellationToken.None);
+                (dto.ActiveMessageCount, dto.DeadLetterMessageCount, dto.TotalMessageCount) = (active, deadLetter, total);
+            }
+
             dto.CreatedAt = rt.CreatedAt;
             dto.UpdatedAt = rt.UpdatedAt;
             dto.AccessedAt = rt.AccessedAt;
@@ -1026,8 +1140,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return null;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return null;
+        var adminClient = GetManagementClient(connection);
 
         var rules = new List<SubscriptionRuleDto>();
         await foreach (var rule in adminClient.GetRulesAsync(topicName, subscriptionName))
@@ -1090,18 +1203,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.AddQueueToConfigAsync(connection.EmulatorConfigId.Value, dto.Name);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         var options = new CreateQueueOptions(dto.Name);
         if (dto.DefaultMessageTimeToLive.HasValue)
         {
@@ -1145,18 +1247,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.AddTopicToConfigAsync(connection.EmulatorConfigId.Value, dto.Name);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         var options = new CreateTopicOptions(dto.Name);
         if (dto.DefaultMessageTimeToLive.HasValue)
         {
@@ -1176,18 +1267,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.AddSubscriptionToConfigAsync(connection.EmulatorConfigId.Value, topicName, dto.Name);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         var options = new CreateSubscriptionOptions(topicName, dto.Name);
         if (dto.DefaultMessageTimeToLive.HasValue)
         {
@@ -1227,8 +1307,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return false;
+        var adminClient = GetManagementClient(connection);
         var props = await adminClient.GetQueueAsync(queueName);
         if (!string.IsNullOrEmpty(dto.Status))
         {
@@ -1262,8 +1341,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return false;
+        var adminClient = GetManagementClient(connection);
         var props = await adminClient.GetTopicAsync(topicName);
         if (!string.IsNullOrEmpty(dto.Status))
         {
@@ -1283,8 +1361,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null) return false;
+        var adminClient = GetManagementClient(connection);
         var props = await adminClient.GetSubscriptionAsync(topicName, subscriptionName);
         if (!string.IsNullOrEmpty(dto.Status))
         {
@@ -1318,18 +1395,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.DeleteQueueFromConfigAsync(connection.EmulatorConfigId.Value, queueName);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         await adminClient.DeleteQueueAsync(queueName);
         _entityCache.Invalidate(connectionId);
         return true;
@@ -1340,18 +1406,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.DeleteTopicFromConfigAsync(connection.EmulatorConfigId.Value, topicName);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         await adminClient.DeleteTopicAsync(topicName);
         _entityCache.Invalidate(connectionId);
         return true;
@@ -1362,18 +1417,7 @@ public class ServiceBusService : IServiceBusService
         var connection = await _connectionRepository.GetByIdAsync(connectionId);
         if (connection == null) return false;
 
-        var adminClient = await GetManagementClientAsync(connection);
-        if (adminClient == null)
-        {
-            if (connection.EmulatorConfigId.HasValue)
-            {
-                await _emulatorConfigService.DeleteSubscriptionFromConfigAsync(connection.EmulatorConfigId.Value, topicName, subscriptionName);
-                _entityCache.Invalidate(connectionId);
-                return true;
-            }
-            return false;
-        }
-
+        var adminClient = GetManagementClient(connection);
         await adminClient.DeleteSubscriptionAsync(topicName, subscriptionName);
         _entityCache.Invalidate(connectionId);
         return true;

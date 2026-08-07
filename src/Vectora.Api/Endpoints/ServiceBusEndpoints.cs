@@ -68,8 +68,8 @@ public static class ServiceBusEndpoints
             return Results.NotFound("Connection not found");
         }
 
-        var (queues, topics, supportsManagement) = result.Value;
-        return Results.Ok(new { queues, topics, supportsManagement });
+        var (queues, topics) = result.Value;
+        return Results.Ok(new { queues, topics });
     }
 
     private static async Task<IResult> GetQueueRuntimeInfo(int connectionId, string queueName, IServiceBusService serviceBusService)

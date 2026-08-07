@@ -55,12 +55,12 @@ public static class ServiceBusTools
             throw new McpException("Connection not found.");
         }
 
-        var (queues, topics, supportsManagement) = result.Value;
-        return new { queues, topics, supportsManagement };
+        var (queues, topics) = result.Value;
+        return new { queues, topics };
     }
 
     [McpServerTool(Name = "describe_entity")]
-    [Description("Returns the full configuration and runtime metrics of a single queue, topic, or subscription: TTL, lock duration, max delivery count, session/duplicate-detection/partitioning flags, forwarding targets, size limits, plus live counts (active, dead-letter, scheduled, transfer) and timestamps. Provide queueName for a queue, topicName alone for a topic, or topicName+subscriptionName for a subscription. Read-only: nothing is modified. Requires the entity to be on a connection with management support (real Service Bus, or an emulator with a reachable admin API).")]
+    [Description("Returns the full configuration and runtime metrics of a single queue, topic, or subscription: TTL, lock duration, max delivery count, session/duplicate-detection/partitioning flags, forwarding targets, size limits, plus live counts (active, dead-letter, scheduled, transfer) and timestamps. Provide queueName for a queue, topicName alone for a topic, or topicName+subscriptionName for a subscription. Read-only: nothing is modified.")]
     public static async Task<object> DescribeEntityAsync(
         IConnectionRepository connections,
         IServiceBusService serviceBus,
@@ -74,27 +74,27 @@ public static class ServiceBusTools
         if (!string.IsNullOrWhiteSpace(queueName))
         {
             var props = await InvokeServiceBusAsync(() => serviceBus.GetQueuePropertiesAsync(connectionId, queueName), queueName);
-            return props ?? throw ManagementUnavailable(queueName);
+            return props ?? throw EntityLookupFailed(queueName);
         }
 
         if (!string.IsNullOrWhiteSpace(topicName) && !string.IsNullOrWhiteSpace(subscriptionName))
         {
             var label = $"{topicName}/{subscriptionName}";
             var props = await InvokeServiceBusAsync(() => serviceBus.GetSubscriptionPropertiesAsync(connectionId, topicName, subscriptionName), label);
-            return props ?? throw ManagementUnavailable(label);
+            return props ?? throw EntityLookupFailed(label);
         }
 
         if (!string.IsNullOrWhiteSpace(topicName))
         {
             var props = await InvokeServiceBusAsync(() => serviceBus.GetTopicPropertiesAsync(connectionId, topicName), topicName);
-            return props ?? throw ManagementUnavailable(topicName);
+            return props ?? throw EntityLookupFailed(topicName);
         }
 
         throw new McpException("Provide queueName, or topicName, or topicName+subscriptionName.");
     }
 
     [McpServerTool(Name = "get_subscription_rules")]
-    [Description("Lists the rules (filters and actions) of a topic subscription, which determine which messages published to the topic are delivered to that subscription. Each rule reports its name, filter type (Sql, Correlation, True, False), the SQL filter expression or matched correlation-filter fields, and any SQL action. Read-only. Requires the connection to have management support.")]
+    [Description("Lists the rules (filters and actions) of a topic subscription, which determine which messages published to the topic are delivered to that subscription. Each rule reports its name, filter type (Sql, Correlation, True, False), the SQL filter expression or matched correlation-filter fields, and any SQL action. Read-only.")]
     public static async Task<object> GetSubscriptionRulesAsync(
         IConnectionRepository connections,
         IServiceBusService serviceBus,
@@ -113,7 +113,7 @@ public static class ServiceBusTools
         var rules = await InvokeServiceBusAsync(() => serviceBus.GetSubscriptionRulesAsync(connectionId, topicName, subscriptionName), label);
         if (rules == null)
         {
-            throw ManagementUnavailable(label);
+            throw EntityLookupFailed(label);
         }
 
         return new { rules, count = rules.Count };
@@ -149,10 +149,9 @@ public static class ServiceBusTools
         return result;
     }
 
-    // Management-only operations return null when the connection has no reachable admin API
-    // (e.g. an emulator without the management port); surface that as a clear message.
-    private static McpException ManagementUnavailable(string entityPath)
-        => new($"Entity details for '{entityPath}' are unavailable: this connection does not support entity management (an emulator without a reachable admin API, or the entity was not found).");
+    // These lookups return null only when the connection id doesn't exist.
+    private static McpException EntityLookupFailed(string entityPath)
+        => new($"Entity details for '{entityPath}' are unavailable: the connection was not found.");
 
     // Turns Service Bus SDK failures into McpException so the agent sees a real message
     // (e.g. entity-not-found) instead of the SDK's generic "An error occurred".
