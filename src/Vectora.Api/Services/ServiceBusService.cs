@@ -73,9 +73,7 @@ public class ServiceBusService : IServiceBusService
 
         if (!refreshCache && _entityCache.TryGet(connectionId, out var cached))
         {
-            var cachedSupportsManagement = !connection.IsEmulator
-                || (_clientCache.GetEmulatorAdminAvailability(connectionId) ?? false);
-            return (cached.Queues, cached.Topics, cachedSupportsManagement);
+            return (cached.Queues, cached.Topics, cached.SupportsManagement);
         }
 
         var queues = new List<QueueInfoDto>();
@@ -112,7 +110,7 @@ public class ServiceBusService : IServiceBusService
 
         var orderedQueues = queues.OrderBy(q => q.Name).ToList();
         var orderedTopics = topics.OrderBy(t => t.Name).ToList();
-        _entityCache.Set(connectionId, orderedQueues, orderedTopics);
+        _entityCache.Set(connectionId, orderedQueues, orderedTopics, supportsManagement);
         return (orderedQueues, orderedTopics, supportsManagement);
     }
 
@@ -1381,4 +1379,3 @@ public class ServiceBusService : IServiceBusService
         return true;
     }
 }
-
