@@ -390,8 +390,22 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             placeholder="Search entities..."
             value={searchTerm}
             onChange={e => handleSearchChange(e.target.value)}
-            className="w-full pl-9 pr-9 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className={`w-full pl-9 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500 ${searchTerm ? 'pr-16' : 'pr-9'}`}
           />
+          {searchTerm && (
+            <button
+              type="button"
+              className="absolute right-9 top-1/2 -translate-y-1/2 p-1 text-dark-400 hover:text-dark-200 transition-colors"
+              onClick={() => {
+                saveSearchTerm(searchTerm);
+                setSearchTerm('');
+              }}
+              title="Clear search"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
           <button
             type="button"
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-dark-400 hover:text-dark-200 transition-colors"
