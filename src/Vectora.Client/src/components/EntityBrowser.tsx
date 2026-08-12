@@ -390,29 +390,31 @@ export default function EntityBrowser({ connection, queues, topics, selectedEnti
             placeholder="Search entities..."
             value={searchTerm}
             onChange={e => handleSearchChange(e.target.value)}
-            className={`w-full pl-9 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500 ${searchTerm ? 'pr-16' : 'pr-9'}`}
+            className="w-full pl-9 pr-14 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm text-white placeholder-dark-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
           {searchTerm && (
             <button
               type="button"
-              className="absolute right-9 top-1/2 -translate-y-1/2 p-1 text-dark-400 hover:text-dark-200 transition-colors"
+              className="absolute right-6 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
               onClick={() => {
-                saveSearchTerm(searchTerm);
+                if (searchTerm.trim()) {
+                  void saveSearchTerm(searchTerm);
+                  searchDeletingRef.current = true;
+                }
                 setSearchTerm('');
               }}
               title="Clear search"
-              aria-label="Clear search"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
           <button
             type="button"
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-dark-400 hover:text-dark-200 transition-colors"
+            className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-dark-500 hover:text-dark-200 rounded transition-colors"
             onClick={() => setSearchHistoryOpen(prev => !prev)}
             title="Search history"
           >
-            <History className="w-4 h-4" />
+            <History className="w-3.5 h-3.5" />
           </button>
           {searchHistoryOpen && (
             <div className="absolute right-0 mt-1 w-full bg-dark-800 border border-dark-600 rounded-lg shadow-lg z-20 max-h-64 overflow-y-auto">
